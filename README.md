@@ -1,6 +1,8 @@
 ## Support
 
-You can support this project in many ways, including testing and diagnostics, merge requests, clearly described issues and suggestions, and [buying Faikout boards from us](https://shop.revk.uk?mrlHiG1i). Thank you all for your support. This is open source so others can make and sell (with trademark restrictions). AI based bug reprots or MRs will get you blocked.
+You can support this project in many ways, including testing and diagnostics, merge requests, clearly described issues and suggestions, and [buying Faikout boards from us](https://shop.revk.uk?mrlHiG1i). Thank you all for your support. This is open source so others can make and sell (with trademark restrictions). AI based bug reports or MRs will get you blocked.
+
+<a href="https://shop.revk.uk?mrlHiG1i" alt="Buy it on Lectronz"><img src="https://lectronz-images.b-cdn.net/static/badges/buy-it-on-lectronz-medium.png" /></a>
 
 # ESP32-Faikout
 

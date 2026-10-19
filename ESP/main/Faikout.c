@@ -817,7 +817,7 @@ daikin_s21_response (uint8_t cmd, uint8_t cmd2, int len, uint8_t *payload)
                report_bool (quiet, payload[0] & 0x80);
             if (!nostreamer)
                report_bool (streamer, payload[1] & 0x80);
-            if (!nosleep)
+            if (sleepmode != REVK_SETTINGS_SLEEPMODE_OFF)
                report_bool (sleep, payload[1] & 0x02);  // Sleep/night mode, seen on ATXC35 (experimental)
             if (!nosensor)
                report_bool (sensor, payload[3] & 0x08);
@@ -1680,7 +1680,12 @@ daikin_control (jo_t j, uint8_t insecure)
 #define	t(name)		if(!strcmp(tag,#name)&&t==JO_NUMBER)err=daikin_set_t(name,strtof(val,NULL));
 #define	i(name)		if(!strcmp(tag,#name)&&t==JO_NUMBER)err=daikin_set_i(name,atoi(val));
 #define	e(name,values)	if(!strcmp(tag,#name)&&t==JO_STRING)err=daikin_set_e(name,val);
+      if (!strcmp (tag, "sleep") && sleepmode != REVK_SETTINGS_SLEEPMODE_SWITCH)
+         err = "Sleep mode is status only (setting sleepmode)";
+      else
+      {
 #include "accontrols.m"
+      }
       if (insecure || !*password)
       {
          if (!strcmp (tag, "auto0") || !strcmp (tag, "auto1"))
@@ -1953,7 +1958,7 @@ mqtt_client_callback (int client, const char *prefix, const char *target, const 
          jo_bool (s, "power", checkbool ());
       if (!strcmp (suffix, "streamer"))
          jo_bool (s, "streamer", checkbool ());
-      if (!strcmp (suffix, "sleep"))
+      if (!strcmp (suffix, "sleep") && sleepmode == REVK_SETTINGS_SLEEPMODE_SWITCH)
          jo_bool (s, "sleep", checkbool ());
       if (!strcmp (suffix, "autoe"))
          jo_bool (s, "autoe", checkbool ());
@@ -2330,13 +2335,23 @@ web_control (httpd_req_t *req)
          addb ("💪", "powerful", "Powerful\nmode");
       if (daikin.status_known & CONTROL_led)
          addb ("💡", "led", "LED\nhigh");
-      if (daikin.status_known & CONTROL_sleep)
+      if ((daikin.status_known & CONTROL_sleep) && sleepmode == REVK_SETTINGS_SLEEPMODE_SWITCH)
          addb ("😴", "sleep", "Sleep\nmode");
+      else if (daikin.status_known & CONTROL_sleep)
+      {                         // Status only (setting sleepmode)
+         if (noicons)
+            revk_web_send (req, "<td align=right style='white-space:pre;vertical-align:middle;'>Sleep\nmode</td>");
+         else
+            revk_web_send (req, "<td title=\"Sleep mode (set on the remote)\" align=right>😴</td>");
+         revk_web_send (req,
+                        "<td title=\"Sleep mode is set on the remote, Faikout only shows it (setting sleepmode)\"><label class=switch><input type=checkbox id=sleep disabled><span class=slider style='opacity:.6;cursor:default'></span></label></td>");
+      }
       tre ();
       addhelp (NULL,
                "♻ Econo limits the power consumption. 💪 Powerful runs at maximum output for about 20 minutes, then returns to normal. "
                "💡 LED sets the brightness of the indoor unit display. "
-               "😴 Sleep is the night mode of the remote: quieter, with a slowly shifting setpoint. It has no effect while Powerful is on.");
+               "😴 Sleep is the night mode of the remote: quieter, with a slowly shifting setpoint, no effect while Powerful is on. "
+               "Greyed out means status only (setting sleepmode), switch it on the remote.");
    }
    if (daikin.status_known & (CONTROL_swingv | CONTROL_swingh | CONTROL_comfort))
    {
@@ -2601,7 +2616,7 @@ diag_send (const char *q, uint8_t expert)
 }
 
 static const char *const diag_settings[] = {
-   "noecono", "nopowerful", "nocomfort", "nostreamer", "nosensor", "noquiet", "nosleep", "noled",
+   "noecono", "nopowerful", "nocomfort", "nostreamer", "nosensor", "noquiet", "sleepmode", "noled",
    "noswingv", "noswingh", "nodemand", "nohumidity", "nohumidify", "noenergy", NULL
 };
 
@@ -2622,7 +2637,10 @@ diag_set (char *list)
       for (i = 0; diag_settings[i] && strcmp (diag_settings[i], p); i++);
       if (!diag_settings[i])
          continue;
-      jo_bool (j, p, *v == '1');
+      if (!strcmp (p, "sleepmode"))
+         jo_int (j, p, *v == '1' ? REVK_SETTINGS_SLEEPMODE_OFF : REVK_SETTINGS_SLEEPMODE_STATUS);      // hide = Off, show = Status
+      else
+         jo_bool (j, p, *v == '1');
       n++;
    }
    if (!n)
@@ -2695,7 +2713,7 @@ web_diag_json (httpd_req_t *req)
    feat ("streamer", CONTROL_streamer, daikin.streamer, "nostreamer", nostreamer);
    feat ("sensor", CONTROL_sensor, daikin.sensor, "nosensor", nosensor);
    feat ("quiet", CONTROL_quiet, daikin.quiet, "noquiet", noquiet);
-   feat ("sleep", CONTROL_sleep, daikin.sleep, "nosleep", nosleep);
+   feat ("sleep", CONTROL_sleep, daikin.sleep, "sleepmode", sleepmode == REVK_SETTINGS_SLEEPMODE_OFF);
    feat ("led", CONTROL_led, daikin.led, "noled", noled);
    feat ("swingv", CONTROL_swingv, daikin.swingv, "noswingv", noswingv);
    feat ("swingh", CONTROL_swingh, daikin.swingh, "noswingh", noswingh);
@@ -3741,7 +3759,7 @@ send_ha_config (void)
    addswitch (haswitches && !nopowerful && (daikin.status_known & CONTROL_powerful), "powerful", "Powerful", "mdi:arm-flex");
    addswitch (haswitches && !nocomfort && (daikin.status_known & CONTROL_comfort), "comfort", "Comfort mode", "mdi:teddy-bear");
    addswitch (haswitches && !noquiet && (daikin.status_known & CONTROL_quiet), "quiet", "Quiet outdoor", "mdi:volume-minus");
-   addswitch (haswitches && !nosleep && (daikin.status_known & CONTROL_sleep), "sleep", "Sleep mode", "mdi:sleep");
+   addswitch (haswitches && sleepmode == REVK_SETTINGS_SLEEPMODE_SWITCH && (daikin.status_known & CONTROL_sleep), "sleep", "Sleep mode", "mdi:sleep");
    addswitch (haswitches && !noecono && (daikin.status_known & CONTROL_econo), "econo", "Econo mode", "mdi:home-battery");
    addswitch (haswitches && !noled && (daikin.status_known & CONTROL_led), "led", "LED", "mdi:lightbulb");
    addswitch (haswitches && !nofaikoutauto, "autoe", "Auto mode", "mdi:power");

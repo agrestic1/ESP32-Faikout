@@ -1,0 +1,77 @@
+name: Build firmware
+
+# Builds the Faikout firmware for every pushed branch (except the mirrored
+# main and the sync branch) and offers the binaries as a workflow artifact.
+#
+# Signing: the firmware only accepts OTA updates signed with the same key it
+# was built with. Store your private key as repository secret
+# FAIKOUT_SIGNING_KEY (RSA 3072 PEM) so all builds share it. Without the
+# secret a throwaway key is used: fine for testing, but such a build can
+# then only be replaced over USB.
+
+on:
+  push:
+    branches-ignore: [main, sync]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.1     # RevK builds the official releases with ESP-IDF v6.1
+    strategy:
+      fail-fast: false
+      matrix:
+        # Makefile targets: s3 = S3-MINI-N4-R2 (current Faikout), s3eth, s3n8, c3, c5, c6
+        # (ESP32 classic targets pico/wroom/solo need an ECDSA key, not set up here)
+        variant: [s3]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq csh libpopt-dev build-essential > /dev/null
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: false
+
+      - name: Signing key
+        working-directory: ESP
+        env:
+          KEY: ${{ secrets.FAIKOUT_SIGNING_KEY }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > secure_boot_signing_key_rsa.pem
+          else
+            echo "::warning::No FAIKOUT_SIGNING_KEY secret, using a throwaway signing key"
+            espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_signing_key_rsa.pem
+          fi
+
+      - name: Build
+        working-directory: ESP
+        run: |
+          git config --global --add safe.directory '*'
+          . "$IDF_PATH/export.sh" > /dev/null
+          make ${{ matrix.variant }}
+
+      - name: Collect binaries
+        working-directory: ESP
+        run: |
+          mkdir -p ../out
+          cp Faikout*.bin ../out/
+          cp build/partition_table/partition-table.bin build/ota_data_initial.bin build/flash_args ../out/
+          cp build/bootloader/bootloader.bin build/Faikout.bin ../out/
+          echo "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}" > ../out/BUILD.txt
+          ls -l ../out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Faikout-${{ matrix.variant }}-run${{ github.run_number }}
+          path: out/

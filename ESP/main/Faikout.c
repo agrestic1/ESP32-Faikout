@@ -2450,7 +2450,7 @@ web_control (httpd_req_t *req)
       "var r=o.env!=null?o.env:o.home!=null?o.home:o.inlet;"   //
       "s('d_room',r!=null?cf(r):'---');"   //
       "s('d_src',o.env!=null?'(external sensor)':o.home!=null?'(A/C sensor)':o.inlet!=null?'(inlet air)':'');"   //
-      "var au=o.autoe&&o.autor>0&&!o.remote;"   //
+      "var au=o.autoe&&o.autor>0&&o.autot>0&&!o.remote;"   //
       "var tg=au?o.autot:o.temp;"   //
       "s('d_target',tg?cf(tg):'---');"   //
       "s('d_band',au?'· Faikout auto ±'+(fh?Math.round(o.autor*18)/10+'℉':o.autor+'℃'):'');"   //

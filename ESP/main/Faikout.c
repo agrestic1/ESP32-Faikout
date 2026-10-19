@@ -3632,6 +3632,23 @@ send_ha_config (void)
          free (topic);
       }
    }
+   void addbinary (uint64_t ok, const char *tag, const char *field, const char *name, const char *icon)
+   {                            // Read only on/off state
+      if (asprintf (&topic, "%s/binary_sensor/%s%s/config", topicha, revk_id, tag) >= 0)
+      {
+         if (!ok)
+            revk_mqtt_send_str (topic);
+         else
+         {
+            jo_t j = make (tag, icon);
+            jo_string (j, "name", name);
+            jo_string (j, "stat_t", hastatus);
+            jo_stringf (j, "val_tpl", "{{ 'ON' if value_json.%s else 'OFF' }}", field);
+            revk_mqtt_send (NULL, 1, topic, &j);
+         }
+         free (topic);
+      }
+   }
    void addswitch (uint64_t ok, const char *tag, const char *name, const char *icon)
    {
       if (asprintf (&topic, "%s/switch/%s%s/config", topicha, revk_id, tag) >= 0)
@@ -3760,6 +3777,9 @@ send_ha_config (void)
    addswitch (haswitches && !nocomfort && (daikin.status_known & CONTROL_comfort), "comfort", "Comfort mode", "mdi:teddy-bear");
    addswitch (haswitches && !noquiet && (daikin.status_known & CONTROL_quiet), "quiet", "Quiet outdoor", "mdi:volume-minus");
    addswitch (haswitches && sleepmode == REVK_SETTINGS_SLEEPMODE_SWITCH && (daikin.status_known & CONTROL_sleep), "sleep", "Sleep mode", "mdi:sleep");
+   // Without a switch (status only, or HA switches off) show sleep as a read only sensor
+   addbinary (!(haswitches && sleepmode == REVK_SETTINGS_SLEEPMODE_SWITCH) && sleepmode != REVK_SETTINGS_SLEEPMODE_OFF
+              && (daikin.status_known & CONTROL_sleep), "sleepstate", "sleep", "Sleep mode", "mdi:sleep");
    addswitch (haswitches && !noecono && (daikin.status_known & CONTROL_econo), "econo", "Econo mode", "mdi:home-battery");
    addswitch (haswitches && !noled && (daikin.status_known & CONTROL_led), "led", "LED", "mdi:lightbulb");
    addswitch (haswitches && !nofaikoutauto, "autoe", "Auto mode", "mdi:power");

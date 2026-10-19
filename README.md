@@ -53,7 +53,7 @@ Linked at the bottom of the controls.
 | Tuned defaults | `heatback` 6 → 1, `heatover` 6 → 2, `autor` - → 0.5, `tempnoflap` 0 → 600 s, `autofmax` 5 → 3, `i2chtemp` 4.0 → 3.0. Aim: the inverter modulates down instead of switching off and on. Defaults only apply to settings you have never changed. |
 | Compressor `999` | Some units answer the compressor query with `999` = no data. That value is now ignored: no `comp` on MQTT, the HA entity is removed, no compressor card. |
 | `noenergy` | New setting: unit has no outdoor energy meter (`FM` always 0). Stops polling and reporting it, removes the HA entity. |
-| `sleepmode` | New setting for the remote's Sleep (night) mode, read from `G6` byte 2 bit `0x02`: **Off** (not shown), **Status** (default, read-only switch, reported on MQTT) or **Switch** (control from web UI, MQTT command `sleep`, HA switch). The ATXC35 accepts the command but ignores it, hence Status. |
+| `sleepmode` | New setting for the remote's Sleep (night) mode, read from `G6` byte 2 bit `0x02`: **Off** (not shown), **Status** (default, read-only switch in the web UI, reported on MQTT, binary sensor in Home Assistant) or **Switch** (control from web UI, MQTT command `sleep`, HA switch). The ATXC35 accepts the command but ignores it, hence Status. |
 | Firmware upload | Enabled (`CONFIG_REVK_WEB_OTA`): *Settings → Firmware*. |
 
 ## Building and installing

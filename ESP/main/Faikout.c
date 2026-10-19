@@ -2763,6 +2763,7 @@ web_diag (httpd_req_t *req)
    if (!web_auth_check (req))
       return ESP_OK;
 #endif
+   httpd_resp_set_hdr (req, "Cache-Control", "no-store");      // Always the page of the running firmware
    web_head (req, "Diagnostics");
    httpd_resp_sendstr_chunk (req,       //
       "<div class=card><h2>Buttons and features</h2>"   //

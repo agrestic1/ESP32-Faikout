@@ -2577,6 +2577,8 @@ web_control (httpd_req_t *req)
 }
 
 // Diagnostics page: raw S21 data and feature support
+static char diag_cmd[12] = "";   // Raw S21 command from /diag, sent by the poll loop
+
 static const char *
 diag_send (const char *q, uint8_t expert)
 {                               // Send a raw S21 query (F or R), or in expert mode also a control command (D)
@@ -2592,11 +2594,9 @@ diag_send (const char *q, uint8_t expert)
    for (int i = 0; i < l; i++)
       if (q[i] < 0x20 || q[i] > 0x7E || q[i] == '"' || q[i] == '\\')
          return "Invalid character";
-   if (debugsend)
+   if (*diag_cmd)
       return "Send pending, try again";
-   char json[20];
-   snprintf (json, sizeof (json), "\"%s\"", q);
-   debugsend = jo_parse_str (json);
+   strncpy (diag_cmd, q, sizeof (diag_cmd) - 1);       // Sent by the S21 poll loop
    return "Sent, see the table";
 }
 
@@ -4633,6 +4633,14 @@ app_main ()
                   }
                   jo_free (&debugsend);
                   b.dumping = dump;     // Back to setting
+               }
+               if (*diag_cmd)
+               {                // Command from the diagnostics page
+                  char c[sizeof (diag_cmd)];
+                  strcpy (c, diag_cmd);
+                  *diag_cmd = 0;
+                  if (strlen (c) >= 2)
+                     daikin_s21_command (c[0], c[1], strlen (c) - 2, c + 2);
                }
 #undef poll
                if (debug)

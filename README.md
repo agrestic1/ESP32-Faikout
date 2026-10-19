@@ -1,3 +1,93 @@
+# About this fork
+
+This is an **unofficial fork** of [RevK/ESP32-Faikout](https://codeberg.org/RevK/ESP32-Faikout) (Codeberg). It is not affiliated with or supported by Andrews & Arnold Ltd / RevK. *Faikout* is their registered trademark. Please do not report problems with this fork upstream. Everything below the line is the original upstream README.
+
+The fork adds a status dashboard and a diagnostics page to the web interface, plus a few changes for an inverter that should run long and slow instead of cycling (developed on a Daikin ATXC35, S21 protocol).
+
+## Branches
+
+| Branch | Content |
+|---|---|
+| `dev` (default) | All changes of this fork, the one to build and flash |
+| `main` | Exact mirror of the Codeberg `main`, overwritten every night by [sync.yml](.github/workflows/sync.yml) - never commit here |
+| `feature/*` | Single topics (`webui-dashboard`, `defaults`, `diagnostics`), merged into `dev` |
+
+To pick up upstream changes: `git switch dev && git rebase main` (or merge), then push.
+
+## What is different
+
+### Web UI: dashboard, explanations, new look
+
+<img src="image/fork-dashboard.png" width=48% align=right alt="Dashboard">
+
+- **Dashboard** at the top of the control page: room temperature vs target (and the Faikout auto band), what the unit is doing (heating, cooling, idle, defrost...), tiles for compressor frequency, power, fan, outside, inlet, liquid pipe, humidity. Tiles only appear for values the unit reports.
+- **Compressor card**: running/stopped and for how long, one bar per minute for the last hour (seconds running), starts and run share in the last hour, last run and pause, totals since restart. Long solid blocks = steady low-power operation, short blocks with gaps = cycling.
+- **Energy since restart** from the unit's own counters (hidden if the unit has none).
+- **? button**: short explanation under every control, including all Faikout auto settings. Remembered per browser.
+- Cards instead of one long table, system font, **dark mode**, better on phones. The old "Temps" row moved into the dashboard.
+- These statistics are kept in RAM since boot and only sent to the web page (`stats` object on the web socket). MQTT and Home Assistant are unchanged.
+
+*(Screenshots rendered with sample data.)*
+
+<br clear=right>
+
+### Diagnostics page `/diag`
+
+<img src="image/fork-diagnostics.png" width=48% align=right alt="Diagnostics">
+
+Linked at the bottom of the controls.
+
+- **Buttons and features**: which features the unit really reports, live values, whether a value changed while the page was open (press the button on your remote to test), and whether your remote has it. Suggests the matching hide settings (`nosensor`, `noquiet`, ...) and can apply them (not when a settings password is set).
+- **Decoded values** as sent by Faikout.
+- **S21 protocol**: every query with its last raw answer (ASCII, hex, decoded number), age, count, changes, and whether the unit supports it. Rows flash on change.
+- **Control commands sent** (`D...`) with the unit's answer, ACK or NAK.
+- **Send** your own queries (`F...`, `R...`); with *expert* ticked also control commands (`D...`).
+- Raw data at `/diag.json`.
+
+<br clear=right>
+
+### Behaviour and settings
+
+| Change | Details |
+|---|---|
+| Tuned defaults | `heatback` 6 → 1, `heatover` 6 → 2, `autor` - → 0.5, `tempnoflap` 0 → 600 s, `autofmax` 5 → 3, `i2chtemp` 4.0 → 3.0. Aim: the inverter modulates down instead of switching off and on. Defaults only apply to settings you have never changed. |
+| Compressor `999` | Some units answer the compressor query with `999` = no data. That value is now ignored: no `comp` on MQTT, the HA entity is removed, no compressor card. |
+| `noenergy` | New setting: unit has no outdoor energy meter (`FM` always 0). Stops polling and reporting it, removes the HA entity. |
+| `sleepmode` | New setting for the remote's Sleep (night) mode, read from `G6` byte 2 bit `0x02`: **Off** (not shown), **Status** (default, read-only switch, reported on MQTT) or **Switch** (control from web UI, MQTT command `sleep`, HA switch). The ATXC35 accepts the command but ignores it, hence Status. |
+| Firmware upload | Enabled (`CONFIG_REVK_WEB_OTA`): *Settings → Firmware*. |
+
+## Building and installing
+
+Every push to a branch other than `main`/`sync` is built by [build.yml](.github/workflows/build.yml) (ESP-IDF v6.1, `make s3` = S3-MINI-N4-R2; add other variants such as `s3eth`, `c3` to the matrix). The binaries are attached to the workflow run:
+
+```
+gh run list -b dev
+gh run download <run id> --dir fw
+```
+
+**Signing**: the firmware only accepts updates signed with the same key it was built with. Create your own key once and store it as repository secret `FAIKOUT_SIGNING_KEY`:
+
+```
+openssl genrsa -out faikout_signing_key.pem 3072
+gh secret set FAIKOUT_SIGNING_KEY < faikout_signing_key.pem
+```
+
+Keep the key private and outside the repository. Without the secret every build uses a random key.
+
+**First install** (the unit runs RevK's firmware, which only accepts RevK-signed updates): once over USB, keeping your settings:
+
+```
+esptool --chip esp32s3 read-flash 0 0x400000 backup.bin
+esptool --chip esp32s3 -b 460800 write-flash --flash-mode dio --flash-freq 40m --flash-size keep \
+  0x0 bootloader.bin 0x8000 partition-table.bin 0xd000 ota_data_initial.bin 0x10000 Faikout.bin
+```
+
+**Later updates**: *Settings → Firmware*, upload **`Faikout-S3-MINI-N4-R2.bin`** (the file name must contain the variant, `Faikout.bin` is refused). Switch off `otaauto`, RevK's updates do not match your key.
+
+The CI patches one line of the ESP32-RevK library (missing `<sys/param.h>` for the firmware upload with ESP-IDF v6.1), see the *Patch library* step.
+
+---
+
 ## Support
 
 You can support this project in many ways, including testing and diagnostics, merge requests, clearly described issues and suggestions, and [buying Faikout boards from us](https://shop.revk.uk?mrlHiG1i). Thank you all for your support. This is open source so others can make and sell (with trademark restrictions). AI based bug reports or MRs will get you blocked.

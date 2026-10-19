@@ -107,6 +107,44 @@ struct
    uint8_t rgfan:1;             // Use RG for fan
 } s21 = { 0 };
 
+// S21 diagnostics for the /diag web page: last response to each command
+#define	S21DIAG_MAX	48
+#define	S21DIAG_LEN	24
+static struct
+{
+   char cmd[2];                 // Response code, e.g. "G1" for F1, "SH" for RH
+   uint8_t len;                 // Payload length (may be more than stored)
+   uint8_t payload[S21DIAG_LEN];
+   uint32_t when;               // uptime of last response
+   uint32_t count;              // Responses seen
+   uint32_t changes;            // Times the payload changed
+} s21diag[S21DIAG_MAX];
+static uint8_t s21diag_n = 0;
+
+static void
+s21diag_record (uint8_t cmd, uint8_t cmd2, int len, const uint8_t *payload)
+{                               // Remember last payload for each response
+   int n;
+   for (n = 0; n < s21diag_n && (s21diag[n].cmd[0] != cmd || s21diag[n].cmd[1] != cmd2); n++);
+   if (n == s21diag_n)
+   {
+      if (s21diag_n >= S21DIAG_MAX)
+         return;
+      s21diag[n].cmd[0] = cmd;
+      s21diag[n].cmd[1] = cmd2;
+      s21diag_n++;
+   }
+   if (len < 0)
+      len = 0;
+   int l = (len > S21DIAG_LEN ? S21DIAG_LEN : len);
+   if (s21diag[n].count && (s21diag[n].len != len || memcmp (s21diag[n].payload, payload, l)))
+      s21diag[n].changes++;
+   memcpy (s21diag[n].payload, payload, l);
+   s21diag[n].len = len;
+   s21diag[n].when = uptime ();
+   s21diag[n].count++;
+}
+
 // Settings (RevK library used by MQTT setting command)
 
 enum
@@ -410,8 +448,8 @@ compstats_update (uint32_t now)
          compstats.Wh0[n] = whval[n];
          compstats.Wh0set |= (1 << n);
       }
-   if (!(daikin.status_known & CONTROL_comp) || !daikin.online)
-      return;
+   if (!(daikin.status_known & CONTROL_comp) || !daikin.online || daikin.comp >= 999)
+      return;                   // Unknown (some units report 999 when they have no compressor data)
    uint8_t running = (daikin.comp > 0);
    if (!compstats.known)
    {                            // First reading, we don't know how long it was like this
@@ -709,6 +747,7 @@ comm_badcrc (uint8_t c, const uint8_t *buf, int rxlen)
 int
 daikin_s21_response (uint8_t cmd, uint8_t cmd2, int len, uint8_t *payload)
 {
+   s21diag_record (cmd, cmd2, len, payload);
    if (len >= 1 && s21debug)
    {
       char tag[3] = { cmd, cmd2 };
@@ -2353,6 +2392,7 @@ web_control (httpd_req_t *req)
       revk_web_send (req, "</table></div>");
    }
    revk_web_send (req, "</form>"        //
+                  "<p class=hint><a href=/diag>Diagnostics: raw S21 data and which buttons your unit supports</a></p>"   //
                   "</div>"      // card
                   "</div>"      //
                   "<style>"     //
@@ -2457,7 +2497,7 @@ web_control (httpd_req_t *req)
       "var a=o.online===false?'off':(o.power===false?'off':(st.action||'idle'));"   //
       "var p=g('d_action');p.textContent=o.online===false?'Offline':(an[a]||a);p.className='pill a-'+a;"   //
       "s('d_acset',au&&o.temp&&o.power?'A/C setpoint '+cf(o.temp)+' ✷':'');"   //
-      "dt('comp',o.comp!=null?o.comp+' Hz':null);"   //
+      "dt('comp',o.comp!=null&&o.comp<999?o.comp+' Hz':null);"   //
       "dt('power',o.consumption!=null?o.consumption+' W':null);"   //
       "dt('fanrpm',o.fanrpm!=null?o.fanrpm+' rpm':null);"   //
       "dt('outside',tc(o.outside));"   //
@@ -2469,7 +2509,7 @@ web_control (httpd_req_t *req)
       "if(st.running!=null){"   //
       "g('d_compcard').style.display='';"   //
       "g('d_dot').className='dot'+(st.running?' run':'');"   //
-      "s('d_cstate',st.running?'Running'+(o.comp?' at '+o.comp+' Hz':''):'Stopped');"   //
+      "s('d_cstate',st.running?'Running'+(o.comp&&o.comp<999?' at '+o.comp+' Hz':''):'Stopped');"   //
       "s('d_cfor','for '+(st.partial?'at least ':'')+fd(st['for']));"   //
       "var b=g('d_bars'),h=st.hour||[],i,v;"   //
       "if(!b.children.length)for(i=0;i<60;i++)b.appendChild(document.createElement('i'));"   //
@@ -2482,7 +2522,7 @@ web_control (httpd_req_t *req)
       "s('d_runtotal',fd(st.runtotal));"   //
       "}"   //
       "var e=0;"   //
-      "function en(id,v,l){if(v!=null){e=1;dt(id,kwh(v)+(l!=null?'<small>lifetime '+Math.round(l/1000)+' kWh</small>':''),1);}else dt(id,null);}"   //
+      "function en(id,v,l){if(v!=null&&(v>0||l>0)){e=1;dt(id,kwh(v)+(l>0?'<small>lifetime '+Math.round(l/1000)+' kWh</small>':''),1);}else dt(id,null);}"   //
       "en('eheat',st.Whheating,o.Whheating);"   //
       "en('ecool',st.Whcooling,o.Whcooling);"   //
       "en('eout',st.Whoutside,o.Whoutside);"   //
@@ -2491,6 +2531,250 @@ web_control (httpd_req_t *req)
       "</script>"   //
       "");
    return revk_web_foot (req, 0, websettings, b.protocol_set ? proto_name () : NULL);
+}
+
+// Diagnostics page: raw S21 data and feature support
+static const char *
+diag_send (const char *q)
+{                               // Send a raw S21 query (read only: F or R commands)
+   if (proto_type () != PROTO_TYPE_S21 || !b.protocol_set)
+      return "Only for the S21 protocol";
+   int l = strlen (q);
+   if (l < 2 || l > 8 || (q[0] != 'F' && q[0] != 'R'))
+      return "Only queries starting F or R, 2 to 8 characters";
+   for (int i = 0; i < l; i++)
+      if (q[i] < 0x20 || q[i] > 0x7E || q[i] == '"' || q[i] == '\\')
+         return "Invalid character";
+   if (debugsend)
+      return "Send pending, try again";
+   char json[16];
+   snprintf (json, sizeof (json), "\"%s\"", q);
+   debugsend = jo_parse_str (json);
+   return "Sent, see the table";
+}
+
+static const char *const diag_settings[] = {
+   "noecono", "nopowerful", "nocomfort", "nostreamer", "nosensor", "noquiet", "noled",
+   "noswingv", "noswingh", "nodemand", "nohumidity", "nohumidify", NULL
+};
+
+static const char *
+diag_set (char *list)
+{                               // name:0/1,name:0/1 - only the feature hide settings
+   if (*password)
+      return "Settings are password protected, use the Settings page";
+   jo_t j = jo_object_alloc ();
+   int n = 0;
+   for (char *p = strtok (list, ","); p; p = strtok (NULL, ","))
+   {
+      char *v = strchr (p, ':');
+      if (!v)
+         continue;
+      *v++ = 0;
+      int i;
+      for (i = 0; diag_settings[i] && strcmp (diag_settings[i], p); i++);
+      if (!diag_settings[i])
+         continue;
+      jo_bool (j, p, *v == '1');
+      n++;
+   }
+   if (!n)
+   {
+      jo_free (&j);
+      return "Nothing to change";
+   }
+   const char *e = revk_setting (j);
+   jo_free (&j);
+   if (e && *e)
+      return e;
+   return "Saved, the unit may restart to apply this";
+}
+
+static esp_err_t
+web_diag_json (httpd_req_t *req)
+{
+#ifdef  CONFIG_REVK_WEB_AUTH
+   if (!web_auth_check (req))
+      return ESP_OK;
+#endif
+   const char *msg = NULL;
+   char query[200] = "";
+   if (httpd_req_get_url_query_str (req, query, sizeof (query)) == ESP_OK)
+   {
+      char val[160];
+      if (httpd_query_key_value (query, "send", val, sizeof (val)) == ESP_OK)
+      {
+         // Undo URL encoding of the few characters we allow
+         char *i = val,
+            *o = val;
+         while (*i)
+         {
+            if (*i == '%' && isxdigit ((int) i[1]) && isxdigit ((int) i[2]))
+            {
+               char h[3] = { i[1], i[2], 0 };
+               *o++ = strtol (h, NULL, 16);
+               i += 3;
+            } else
+               *o++ = *i++;
+         }
+         *o = 0;
+         msg = diag_send (val);
+      } else if (httpd_query_key_value (query, "set", val, sizeof (val)) == ESP_OK)
+         msg = diag_set (val);
+   }
+   jo_t j = jo_object_alloc ();
+   if (msg)
+      jo_string (j, "msg", msg);
+   jo_string (j, "protocol", b.protocol_set ? proto_name () : "searching");
+   jo_int (j, "uptime", uptime ());
+   jo_bool (j, "locked", *password ? 1 : 0);
+   jo_array (j, "features");
+   void feat (const char *name, uint64_t flag, int value, const char *setting, uint8_t hidden)
+   {
+      jo_object (j, NULL);
+      jo_string (j, "name", name);
+      jo_bool (j, "known", (daikin.status_known & flag) ? 1 : 0);
+      if (daikin.status_known & flag)
+         jo_int (j, "value", value);
+      jo_string (j, "setting", setting);
+      jo_bool (j, "hidden", hidden);
+      jo_close (j);
+   }
+   feat ("econo", CONTROL_econo, daikin.econo, "noecono", noecono);
+   feat ("powerful", CONTROL_powerful, daikin.powerful, "nopowerful", nopowerful);
+   feat ("comfort", CONTROL_comfort, daikin.comfort, "nocomfort", nocomfort);
+   feat ("streamer", CONTROL_streamer, daikin.streamer, "nostreamer", nostreamer);
+   feat ("sensor", CONTROL_sensor, daikin.sensor, "nosensor", nosensor);
+   feat ("quiet", CONTROL_quiet, daikin.quiet, "noquiet", noquiet);
+   feat ("led", CONTROL_led, daikin.led, "noled", noled);
+   feat ("swingv", CONTROL_swingv, daikin.swingv, "noswingv", noswingv);
+   feat ("swingh", CONTROL_swingh, daikin.swingh, "noswingh", noswingh);
+   feat ("demand", CONTROL_demand, daikin.demand, "nodemand", nodemand);
+   feat ("humidity", CONTROL_hum, (int) daikin.hum, "nohumidity", nohumidity);
+   feat ("humidify", CONTROL_humidify, daikin.humidify, "nohumidify", nohumidify);
+   jo_close (j);
+   uint32_t now = uptime ();
+   jo_array (j, "s21");
+   for (int n = 0; n < s21diag_n; n++)
+   {
+      int l = (s21diag[n].len > S21DIAG_LEN ? S21DIAG_LEN : s21diag[n].len);
+      char ascii[S21DIAG_LEN + 1];
+      for (int i = 0; i < l; i++)
+         ascii[i] = (s21diag[n].payload[i] >= 0x20 && s21diag[n].payload[i] < 0x7F) ? s21diag[n].payload[i] : '.';
+      ascii[l] = 0;
+      jo_object (j, NULL);
+      jo_stringf (j, "cmd", "%c%c", s21diag[n].cmd[0], s21diag[n].cmd[1]);
+      jo_string (j, "ascii", ascii);
+      jo_base16 (j, "hex", s21diag[n].payload, l);
+      jo_int (j, "len", s21diag[n].len);
+      jo_int (j, "age", now - s21diag[n].when);
+      jo_int (j, "count", s21diag[n].count);
+      jo_int (j, "changes", s21diag[n].changes);
+      jo_close (j);
+   }
+   jo_close (j);
+   jo_object (j, "poll");       // Status of each regular query
+#define	p(x)	jo_string(j,#x,s21.x.bad?"unsupported":s21.x.ack?"ok":s21.x.nak?"nak":"off");
+   p (F1) p (F2) p (F3) p (F4) p (F5) p (F6) p (F7) p (F8) p (F9) p (FA) p (FB) p (FC) p (FG) p (FK) p (FN) p (FM) p (FP) p (FQ)
+      p (FS) p (FT) p (FU04) p (FX60) p (DH1000) p (RD) p (RG) p (RI) p (RM) p (RL) p (RN) p (RH) p (RX) p (Ra) p (Rd) p (Re)
+#undef p
+      jo_close (j);
+   char *out = jo_finisha (&j);
+   httpd_resp_set_type (req, "application/json");
+   httpd_resp_set_hdr (req, "Cache-Control", "no-store");
+   httpd_resp_sendstr (req, out ? : "{}");
+   free (out);
+   return ESP_OK;
+}
+
+static esp_err_t
+web_diag (httpd_req_t *req)
+{
+#ifdef  CONFIG_REVK_WEB_AUTH
+   if (!web_auth_check (req))
+      return ESP_OK;
+#endif
+   web_head (req, "Diagnostics");
+   httpd_resp_sendstr_chunk (req,       //
+      "<div class=card><h2>Buttons and features</h2>"   //
+      "<p class=hint>Faikout shows a button when the A/C answers for that feature, even if your unit or remote does not really have it. Say for each feature whether your remote has it, then press the button on the remote and watch the value: if it changes here, the unit really supports it.</p>"   //
+      "<div style=overflow-x:auto><table class=dt id=feat><tr><th>Feature</th><th>A/C reports</th><th>Value</th><th>Changed</th><th>On my remote</th><th>Suggestion</th></tr></table></div>"   //
+      "<p id=sugg class=sub></p>"   //
+      "<p><button type=button id=apply onclick=applys()>Apply suggested settings</button> <span id=amsg class=sub></span></p>"   //
+      "</div>"   //
+      "<div class=card><h2>Decoded values</h2>"   //
+      "<p class=hint>What Faikout made of the protocol, as sent to this page. A value of 999 or a constant 0 usually means the unit does not support that reading.</p>"   //
+      "<div class=tiles id=dec></div>"   //
+      "</div>"   //
+      "<div class=card><h2>S21 protocol</h2>"   //
+      "<p class=hint>Every query Faikout sends (F… or R…) and the last raw answer (G… or S…). Rows flash when the answer changes. Unsupported means the unit refused the query several times. Number readings are sent as reversed ASCII digits, e.g. 532+ is 23.5.</p>"   //
+      "<p><input id=sq size=8 maxlength=8 placeholder='e.g. RH' style='min-height:30px;border-radius:8px;padding:0 8px'> <button type=button onclick=sendq()>Send query</button> <span id=smsg class=sub></span> <a href=/diag.json target=_blank style=float:right>raw JSON</a></p>"   //
+      "<div style=overflow-x:auto><table class=dt id=raw><tr><th>Query</th><th>Meaning</th><th>Answer</th><th>Hex</th><th>Value</th><th>Age</th><th>Count</th><th>Changes</th><th>Status</th></tr></table></div>"   //
+      "</div>"   //
+      "<style>"   //
+      "table.dt{width:100%;font-size:.9em;}"   //
+      "table.dt th{text-align:left;color:var(--mut);font-weight:600;font-size:.85em;border-bottom:1px solid var(--line);padding:4px 6px;}"   //
+      "table.dt td{border-bottom:1px solid var(--line);padding:4px 6px;vertical-align:middle;}"   //
+      "table.dt td.m{font-family:ui-monospace,Consolas,monospace;white-space:pre;}"   //
+      "table.dt select{min-height:28px;}"   //
+      "tr.flash td{background:#2b7de933;transition:none;}"   //
+      "tr td{transition:background 2s;}"   //
+      ".ok{color:#0ca678;font-weight:600;}.bad{color:#e03131;font-weight:600;}.warn{color:#e8590c;font-weight:600;}"   //
+      "</style>"   //
+      "<script>"   //
+      "function g(n){return document.getElementById(n);}"   //
+      "function hh(){var c=document.body.classList;c.toggle('showhelp');try{localStorage.faikouthelp=c.contains('showhelp')?1:0;}catch(e){}}"   //
+      "try{if(localStorage.faikouthelp==1)document.body.classList.add('showhelp');}catch(e){}"   //
+      "function esc(t){return String(t).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}"   //
+      "var FL={econo:'♻ Econo',powerful:'💪 Powerful',comfort:'🧸 Comfort airflow',streamer:'🦠 Streamer',sensor:'🙆 Presence sensor',quiet:'🤫 Quiet outdoor',led:'💡 LED brightness',swingv:'↕ Vertical swing',swingh:'↔ Horizontal swing',demand:'Demand limit',humidity:'Humidity sensor',humidify:'Humidifier'};"   //
+      "var M={F1:'Power, mode, setpoint, fan',F2:'Feature flags',F3:'Timer / powerful (older units)',F4:'Unknown',F5:'Swing, humidifier',F6:'Powerful, comfort, quiet, streamer, sensor, LED',F7:'Demand, econo',F8:'Protocol version',F9:'Room and outside temp (short form)',FA:'Unknown',FB:'Unknown',FC:'Model code',FG:'Unknown',FK:'Unknown',FN:'Unknown',FM:'Outdoor energy meter (0.1 kWh)',FP:'Unknown',FQ:'Unknown',FS:'Unknown',FT:'Unknown',FU04:'Energy heating/cooling (0.1 kWh)',FX60:'Power consumption (10 W)',DH1000:'Hourly poll',RH:'Room temperature',RI:'Liquid pipe temperature',Ra:'Outside temperature',RL:'Fan speed (x10 rpm)',Rd:'Compressor frequency (Hz)',RN:'Louvre angle',RG:'Fan mode',Re:'Humidity',RM:'Unknown',RX:'Unknown',RD:'Unknown'};"   //
+      "function rc(q){return (q[0]=='F'?'G':q[0]=='R'?'S':q[0]=='D'?'E':q[0])+q[1];}"   //
+      "function num(a){if(!/^[0-9]{3}[-+]$/.test(a))return'';var v=+(a[2]+a[1]+a[0]);if(a[3]=='-')v=-v;return v;}"   //
+      "function fd(x){if(x<60)return x+' s';if(x<3600)return Math.floor(x/60)+' min';return Math.floor(x/3600)+' h';}"   //
+      "function rem(n){try{return localStorage['faikoutremote_'+n]||'';}catch(e){return '';}}"   //
+      "function setrem(n,v){try{localStorage['faikoutremote_'+n]=v;}catch(e){}draw();}"   //
+      "var D=null,first={},prev={},want={};"   //
+      "function draw(){"   //
+      "if(!D)return;"   //
+      "var t=g('feat');while(t.rows.length>1)t.deleteRow(1);want={};"   //
+      "D.features.forEach(function(f){"   //
+      "var r=t.insertRow(),v=f.known?f.value:null,ch='';"   //
+      "if(v!=null){if(!(f.name in first))first[f.name]=v;else if(first[f.name]!=v)ch='<span class=ok>✓ yes</span>';}"   //
+      "var h=rem(f.name),sg='';"   //
+      "if(f.hidden){if(h=='y'){sg='<span class=warn>show again</span>';want[f.setting]=0;}else sg='hidden';}"   //
+      "else if(!f.known)sg='not shown (A/C does not report it)';"   //
+      "else if(h=='n'){sg='<span class=warn>hide</span>';want[f.setting]=1;}"   //
+      "else if(h=='y')sg='<span class=ok>keep</span>';"   //
+      "else sg='tell me whether your remote has it';"   //
+      "r.innerHTML='<td>'+(FL[f.name]||f.name)+'</td><td>'+(f.known?'<span class=ok>yes</span>':'no')+(f.hidden?' (hidden)':'')+'</td><td>'+(v==null?'':v)+'</td><td>'+ch+'</td>'+"   //
+      "'<td><select onchange=\"setrem(\\''+f.name+'\\',this.value)\"><option value=\"\">?</option><option value=y'+(h=='y'?' selected':'')+'>has it</option><option value=n'+(h=='n'?' selected':'')+'>missing</option></select></td><td>'+sg+' <small class=sub>'+f.setting+'</small></td>';"   //
+      "});"   //
+      "var k=Object.keys(want);"   //
+      "g('sugg').innerHTML=k.length?'Suggested settings: <b>'+k.map(function(x){return x+'='+want[x];}).join(', ')+'</b>. These need a restart, which happens automatically.':'No changes suggested.';"   //
+      "var a=g('apply');a.disabled=!k.length||D.locked;"   //
+      "if(D.locked)g('amsg').textContent='A settings password is set: change these on the Settings page instead.';"   //
+      "var t2=g('raw'),seen={};while(t2.rows.length>1)t2.deleteRow(1);"   //
+      "var resp={};D.s21.forEach(function(x){resp[x.cmd]=x;});"   //
+      "var qs=Object.keys(D.poll);D.s21.forEach(function(x){var q=(x.cmd[0]=='G'?'F':x.cmd[0]=='S'?'R':'?')+x.cmd[1];var f=qs.filter(function(p){return rc(p)==x.cmd;});if(!f.length)qs.push(q);});"   //
+      "qs.forEach(function(q){"   //
+      "var x=resp[rc(q)],st=D.poll[q]||'',r=t2.insertRow();"   //
+      "if(x&&prev[x.cmd]!=null&&prev[x.cmd]!=x.hex){r.className='flash';(function(r){setTimeout(function(){r.className='';},50);})(r);}"   //
+      "if(x)prev[x.cmd]=x.hex;"   //
+      "r.innerHTML='<td class=m>'+q+(x?' → '+x.cmd:'')+'</td><td>'+(M[q]||'')+'</td><td class=m>'+(x?esc(x.ascii):'')+'</td><td class=m>'+(x?x.hex:'')+'</td><td>'+(x?(/^R[HIa]$/.test(q)&&num(x.ascii)!==''?num(x.ascii)/10:num(x.ascii)):'')+'</td><td>'+(x?fd(x.age):'')+'</td><td>'+(x?x.count:'')+'</td><td>'+(x?x.changes:'')+'</td><td>'+(st=='ok'?'<span class=ok>ok</span>':st=='unsupported'?'<span class=bad>unsupported</span>':st=='nak'?'<span class=warn>nak</span>':st=='off'?'not polled':st)+'</td>';"   //
+      "});"   //
+      "}"   //
+      "function load(q){var x=new XMLHttpRequest();x.open('GET','/diag.json'+(q||''));x.onload=function(){try{D=JSON.parse(x.responseText);}catch(e){return;}if(D.msg){if(q&&q.indexOf('send')>0)g('smsg').textContent=D.msg;else g('amsg').textContent=D.msg;}draw();};x.send();}"   //
+      "function applys(){var k=Object.keys(want);if(!k.length)return;load('?set='+k.map(function(x){return x+':'+want[x];}).join(','));}"   //
+      "function sendq(){var v=g('sq').value.trim();if(v)load('?send='+encodeURIComponent(v));}"   //
+      "load();setInterval(load,2000);"   //
+      "var ws=null;"   //
+      "function c(){ws=new WebSocket((location.protocol=='https:'?'wss:':'ws:')+'//'+location.host+'/status');"   //
+      "ws.onmessage=function(v){var o=JSON.parse(v.data),d=g('dec'),h='';Object.keys(o).forEach(function(k){if(typeof o[k]=='object')return;h+='<div class=tile><span>'+esc(k)+'</span><b>'+esc(o[k])+'</b></div>';});d.innerHTML=h;};"   //
+      "ws.onclose=function(){setTimeout(c,5000);};}"   //
+      "c();setInterval(function(){if(ws&&ws.readyState==1)ws.send('');},2000);"   //
+      "</script>"   //
+      "");
+   return revk_web_foot (req, 1, websettings, b.protocol_set ? proto_name () : NULL);
 }
 
 static esp_err_t
@@ -3776,7 +4060,7 @@ app_main ()
    if (webcontrol || websettings)
    {
       // Web interface
-      httpd_config_t config = revk_httpd_config (16);
+      httpd_config_t config = revk_httpd_config (18);
       ESP_LOGE (TAG, "HTTPD stack %u sockets %u handlers %u", config.stack_size, config.max_open_sockets, config.max_uri_handlers);
       if (!httpd_start (&webserver, &config))
       {
@@ -3789,6 +4073,8 @@ app_main ()
          {
             revk_register_get_uri (webserver, "/control", web_control);
             revk_register_ws_uri (webserver, "/status", web_status);
+            revk_register_get_uri (webserver, "/diag", web_diag);
+            revk_register_get_uri (webserver, "/diag.json", web_diag_json);
             revk_register_get_uri (webserver, "/common/basic_info", legacy_web_get_basic_info);
             revk_register_get_uri (webserver, "/aircon/get_model_info", legacy_web_get_model_info);
             revk_register_get_uri (webserver, "/aircon/get_control_info", legacy_web_get_control_info);

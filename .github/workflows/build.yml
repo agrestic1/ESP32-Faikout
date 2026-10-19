@@ -54,6 +54,13 @@ jobs:
             espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_signing_key_rsa.pem
           fi
 
+      - name: Patch library
+        working-directory: ESP
+        run: |
+          # ESP32-RevK's web firmware upload (CONFIG_REVK_WEB_OTA) uses MIN() without <sys/param.h>
+          sed -i '0,/#include "esp_ota_ops.h"/s//#include "esp_ota_ops.h"\n#include <sys\/param.h>/' components/ESP32-RevK/revk.c
+          grep -n 'sys/param.h' components/ESP32-RevK/revk.c
+
       - name: Build
         working-directory: ESP
         run: |

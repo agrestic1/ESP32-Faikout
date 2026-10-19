@@ -817,6 +817,8 @@ daikin_s21_response (uint8_t cmd, uint8_t cmd2, int len, uint8_t *payload)
                report_bool (quiet, payload[0] & 0x80);
             if (!nostreamer)
                report_bool (streamer, payload[1] & 0x80);
+            if (!nosleep)
+               report_bool (sleep, payload[1] & 0x02);  // Sleep/night mode, seen on ATXC35 (experimental)
             if (!nosensor)
                report_bool (sensor, payload[3] & 0x08);
             if (!noled)
@@ -1917,6 +1919,8 @@ mqtt_client_callback (int client, const char *prefix, const char *target, const 
          jo_bool (s, "power", checkbool ());
       if (!strcmp (suffix, "streamer"))
          jo_bool (s, "streamer", checkbool ());
+      if (!strcmp (suffix, "sleep"))
+         jo_bool (s, "sleep", checkbool ());
       if (!strcmp (suffix, "autoe"))
          jo_bool (s, "autoe", checkbool ());
       if (!strcmp (suffix, "led"))
@@ -2283,7 +2287,7 @@ web_control (httpd_req_t *req)
                "Demand: limits the maximum compressor output (30 to 100 percent). "
                "Lower values cap power consumption and noise, at the cost of heating/cooling capacity.");
    }
-   if (daikin.status_known & (CONTROL_econo | CONTROL_powerful | CONTROL_led))
+   if (daikin.status_known & (CONTROL_econo | CONTROL_powerful | CONTROL_led | CONTROL_sleep))
    {
       tr (NULL);
       if (daikin.status_known & CONTROL_econo)
@@ -2292,10 +2296,13 @@ web_control (httpd_req_t *req)
          addb ("💪", "powerful", "Powerful\nmode");
       if (daikin.status_known & CONTROL_led)
          addb ("💡", "led", "LED\nhigh");
+      if (daikin.status_known & CONTROL_sleep)
+         addb ("😴", "sleep", "Sleep\nmode");
       tre ();
       addhelp (NULL,
                "♻ Econo limits the power consumption. 💪 Powerful runs at maximum output for about 20 minutes, then returns to normal. "
-               "💡 LED sets the brightness of the indoor unit display.");
+               "💡 LED sets the brightness of the indoor unit display. "
+               "😴 Sleep is the night mode of the remote: quieter, with a slowly shifting setpoint. It has no effect while Powerful is on.");
    }
    if (daikin.status_known & (CONTROL_swingv | CONTROL_swingh | CONTROL_comfort))
    {
@@ -2443,6 +2450,7 @@ web_control (httpd_req_t *req)
                   "b('led',o.led);"     //
                   "b('quiet',o.quiet);" //
                   "b('streamer',o.streamer);"   //
+                  "b('sleep',o.sleep);" //
                   "e('mode',o.mode);"   //
                   "t('Inlet',o.inlet);" //
                   "t('Home',o.home);"   //
@@ -2555,7 +2563,7 @@ diag_send (const char *q)
 }
 
 static const char *const diag_settings[] = {
-   "noecono", "nopowerful", "nocomfort", "nostreamer", "nosensor", "noquiet", "noled",
+   "noecono", "nopowerful", "nocomfort", "nostreamer", "nosensor", "noquiet", "nosleep", "noled",
    "noswingv", "noswingh", "nodemand", "nohumidity", "nohumidify", "noenergy", NULL
 };
 
@@ -2647,6 +2655,7 @@ web_diag_json (httpd_req_t *req)
    feat ("streamer", CONTROL_streamer, daikin.streamer, "nostreamer", nostreamer);
    feat ("sensor", CONTROL_sensor, daikin.sensor, "nosensor", nosensor);
    feat ("quiet", CONTROL_quiet, daikin.quiet, "noquiet", noquiet);
+   feat ("sleep", CONTROL_sleep, daikin.sleep, "nosleep", nosleep);
    feat ("led", CONTROL_led, daikin.led, "noled", noled);
    feat ("swingv", CONTROL_swingv, daikin.swingv, "noswingv", noswingv);
    feat ("swingh", CONTROL_swingh, daikin.swingh, "noswingh", noswingh);
@@ -2728,8 +2737,8 @@ web_diag (httpd_req_t *req)
       "function hh(){var c=document.body.classList;c.toggle('showhelp');try{localStorage.faikouthelp=c.contains('showhelp')?1:0;}catch(e){}}"   //
       "try{if(localStorage.faikouthelp==1)document.body.classList.add('showhelp');}catch(e){}"   //
       "function esc(t){return String(t).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}"   //
-      "var FL={econo:'♻ Econo',powerful:'💪 Powerful',comfort:'🧸 Comfort airflow',streamer:'🦠 Streamer',sensor:'🙆 Presence sensor',quiet:'🤫 Quiet outdoor',led:'💡 LED brightness',swingv:'↕ Vertical swing',swingh:'↔ Horizontal swing',demand:'Demand limit',humidity:'Humidity sensor',humidify:'Humidifier',energy:'Outdoor energy meter (0.1 kWh)'};"   //
-      "var M={F1:'Power, mode, setpoint, fan',F2:'Feature flags',F3:'Timer / powerful (older units)',F4:'Unknown',F5:'Swing, humidifier',F6:'Powerful, comfort, quiet, streamer, sensor, LED',F7:'Demand, econo',F8:'Protocol version',F9:'Room and outside temp (short form)',FA:'Unknown',FB:'Unknown',FC:'Model code',FG:'Unknown',FK:'Unknown',FN:'Unknown',FM:'Outdoor energy meter (0.1 kWh)',FP:'Unknown',FQ:'Unknown',FS:'Unknown',FT:'Unknown',FU04:'Energy heating/cooling (0.1 kWh)',FX60:'Power consumption (10 W)',DH1000:'Hourly poll',RH:'Room temperature',RI:'Liquid pipe temperature',Ra:'Outside temperature',RL:'Fan speed (x10 rpm)',Rd:'Compressor frequency (Hz)',RN:'Louvre angle',RG:'Fan mode',Re:'Humidity',RM:'Unknown',RX:'Unknown',RD:'Unknown'};"   //
+      "var FL={econo:'♻ Econo',powerful:'💪 Powerful',comfort:'🧸 Comfort airflow',streamer:'🦠 Streamer',sensor:'🙆 Presence sensor',quiet:'🤫 Quiet outdoor',sleep:'😴 Sleep mode',led:'💡 LED brightness',swingv:'↕ Vertical swing',swingh:'↔ Horizontal swing',demand:'Demand limit',humidity:'Humidity sensor',humidify:'Humidifier',energy:'Outdoor energy meter (0.1 kWh)'};"   //
+      "var M={F1:'Power, mode, setpoint, fan',F2:'Feature flags',F3:'Timer / powerful (older units)',F4:'Unknown',F5:'Swing, humidifier',F6:'Powerful, comfort, quiet, streamer, sleep, sensor, LED',F7:'Demand, econo',F8:'Protocol version',F9:'Room and outside temp (short form)',FA:'Unknown',FB:'Unknown',FC:'Model code',FG:'Unknown',FK:'Unknown',FN:'Unknown',FM:'Outdoor energy meter (0.1 kWh)',FP:'Unknown',FQ:'Unknown',FS:'Unknown',FT:'Unknown',FU04:'Energy heating/cooling (0.1 kWh)',FX60:'Power consumption (10 W)',DH1000:'Hourly poll',RH:'Room temperature',RI:'Liquid pipe temperature',Ra:'Outside temperature',RL:'Fan speed (x10 rpm)',Rd:'Compressor frequency (Hz)',RN:'Louvre angle',RG:'Fan mode',Re:'Humidity',RM:'Unknown',RX:'Unknown',RD:'Unknown'};"   //
       "function rc(q){return (q[0]=='F'?'G':q[0]=='R'?'S':q[0]=='D'?'E':q[0])+q[1];}"   //
       "function num(a){if(!/^[0-9]{3}[-+]$/.test(a))return'';var v=+(a[2]+a[1]+a[0]);if(a[3]=='-')v=-v;return v;}"   //
       "function fd(x){if(x<60)return x+' s';if(x<3600)return Math.floor(x/60)+' min';return Math.floor(x/3600)+' h';}"   //
@@ -3668,6 +3677,7 @@ send_ha_config (void)
    addswitch (haswitches && !nopowerful && (daikin.status_known & CONTROL_powerful), "powerful", "Powerful", "mdi:arm-flex");
    addswitch (haswitches && !nocomfort && (daikin.status_known & CONTROL_comfort), "comfort", "Comfort mode", "mdi:teddy-bear");
    addswitch (haswitches && !noquiet && (daikin.status_known & CONTROL_quiet), "quiet", "Quiet outdoor", "mdi:volume-minus");
+   addswitch (haswitches && !nosleep && (daikin.status_known & CONTROL_sleep), "sleep", "Sleep mode", "mdi:sleep");
    addswitch (haswitches && !noecono && (daikin.status_known & CONTROL_econo), "econo", "Econo mode", "mdi:home-battery");
    addswitch (haswitches && !noled && (daikin.status_known & CONTROL_led), "led", "LED", "mdi:lightbulb");
    addswitch (haswitches && !nofaikoutauto, "autoe", "Auto mode", "mdi:power");
@@ -3868,6 +3878,8 @@ revk_state_extra (jo_t j)
       jo_bool (j, "streamer", daikin.streamer);
    if (daikin.status_known & CONTROL_quiet)
       jo_bool (j, "quiet", daikin.quiet);
+   if (daikin.status_known & CONTROL_sleep)
+      jo_bool (j, "sleep", daikin.sleep);
    if (daikin.status_known & CONTROL_econo)
       jo_bool (j, "econo", daikin.econo);
    if (daikin.status_known & CONTROL_comfort)
@@ -4589,13 +4601,13 @@ app_main ()
                   xSemaphoreGive (daikin.mutex);
                }
                if (daikin.control_changed & (CONTROL_powerful | CONTROL_comfort | CONTROL_streamer |
-                                             CONTROL_sensor | CONTROL_quiet | CONTROL_led))
+                                             CONTROL_sensor | CONTROL_quiet | CONTROL_led | CONTROL_sleep))
                {                // D6
                   xSemaphoreTake (daikin.mutex, portMAX_DELAY);
                   if (!s21.F6.bad)
                   {
                      temp[0] = '0' + (daikin.powerful ? 2 : 0) + (daikin.comfort ? 0x40 : 0) + (daikin.quiet ? 0x80 : 0);
-                     temp[1] = '0' + (daikin.streamer ? 0x80 : 0);
+                     temp[1] = '0' + (daikin.streamer ? 0x80 : 0) + (daikin.sleep ? 0x02 : 0);       // Keep sleep, else changing e.g. powerful would cancel it
                      temp[2] = '0';
                      // If sensor, the 8 is sensor, if not, then 4 and 8 are LED, with 4=high, 8=low, 12=off
                      if (noled || !nosensor)

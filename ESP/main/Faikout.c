@@ -1333,8 +1333,8 @@ jo_s21_alloc (char cmd, char cmd2, const char *payload, int payload_len)
    return j;
 }
 
-int
-daikin_s21_command (uint8_t cmd, uint8_t cmd2, int payload_len, char *payload)
+static int
+daikin_s21_command_raw (uint8_t cmd, uint8_t cmd2, int payload_len, char *payload)
 {
    // Note this does not set talking = 0 as handled at the poll loop instead
    // A payload len of -1 means cmd1 and not cmd2 which is special for M and V commands
@@ -1523,6 +1523,40 @@ daikin_s21_command (uint8_t cmd, uint8_t cmd2, int payload_len, char *payload)
       break;
    }
    return daikin_s21_response (buf[S21_CMD0_OFFSET], buf[S21_CMD1_OFFSET], rxlen - S21_MIN_PKT_LEN, buf + S21_PAYLOAD_OFFSET);
+}
+
+// Log of control commands (D...) sent to the unit and the result, for /diag
+#define	S21TX_MAX	16
+static struct
+{
+   char cmd[2];
+   char payload[8];
+   uint8_t len;
+   uint8_t res;
+   uint32_t when;
+} s21tx[S21TX_MAX];
+static uint8_t s21tx_pos = 0,
+   s21tx_n = 0;
+
+int
+daikin_s21_command (uint8_t cmd, uint8_t cmd2, int payload_len, char *payload)
+{
+   int r = daikin_s21_command_raw (cmd, cmd2, payload_len, payload);
+   if (cmd == 'D')
+   {
+      s21tx[s21tx_pos].cmd[0] = cmd;
+      s21tx[s21tx_pos].cmd[1] = cmd2;
+      int l = (payload_len < 0 ? 0 : payload_len > sizeof (s21tx[0].payload) ? sizeof (s21tx[0].payload) : payload_len);
+      if (l)
+         memcpy (s21tx[s21tx_pos].payload, payload, l);
+      s21tx[s21tx_pos].len = l;
+      s21tx[s21tx_pos].res = r;
+      s21tx[s21tx_pos].when = uptime ();
+      s21tx_pos = (s21tx_pos + 1) % S21TX_MAX;
+      if (s21tx_n < S21TX_MAX)
+         s21tx_n++;
+   }
+   return r;
 }
 
 void
@@ -2544,19 +2578,23 @@ web_control (httpd_req_t *req)
 
 // Diagnostics page: raw S21 data and feature support
 static const char *
-diag_send (const char *q)
-{                               // Send a raw S21 query (read only: F or R commands)
+diag_send (const char *q, uint8_t expert)
+{                               // Send a raw S21 query (F or R), or in expert mode also a control command (D)
    if (proto_type () != PROTO_TYPE_S21 || !b.protocol_set)
       return "Only for the S21 protocol";
    int l = strlen (q);
-   if (l < 2 || l > 8 || (q[0] != 'F' && q[0] != 'R'))
-      return "Only queries starting F or R, 2 to 8 characters";
+   if (q[0] == 'D' && !expert)
+      return "Control commands (D...) need the expert option";
+   if (q[0] == 'D' && *password)
+      return "Control commands are not allowed when a settings password is set";
+   if (l < 2 || l > 10 || (q[0] != 'F' && q[0] != 'R' && q[0] != 'D'))
+      return "Only commands starting F, R or D, 2 to 10 characters";
    for (int i = 0; i < l; i++)
       if (q[i] < 0x20 || q[i] > 0x7E || q[i] == '"' || q[i] == '\\')
          return "Invalid character";
    if (debugsend)
       return "Send pending, try again";
-   char json[16];
+   char json[20];
    snprintf (json, sizeof (json), "\"%s\"", q);
    debugsend = jo_parse_str (json);
    return "Sent, see the table";
@@ -2627,7 +2665,9 @@ web_diag_json (httpd_req_t *req)
                *o++ = *i++;
          }
          *o = 0;
-         msg = diag_send (val);
+         char x[4] = "";
+         httpd_query_key_value (query, "x", x, sizeof (x));
+         msg = diag_send (val, *x == '1');
       } else if (httpd_query_key_value (query, "set", val, sizeof (val)) == ESP_OK)
          msg = diag_set (val);
    }
@@ -2684,6 +2724,24 @@ web_diag_json (httpd_req_t *req)
       jo_close (j);
    }
    jo_close (j);
+   jo_array (j, "tx");          // Control commands sent, newest first
+   for (int n = 0; n < s21tx_n; n++)
+   {
+      int i = (s21tx_pos + S21TX_MAX - 1 - n) % S21TX_MAX;
+      char p[sizeof (s21tx[0].payload) + 1];
+      for (int k = 0; k < s21tx[i].len; k++)
+         p[k] = (s21tx[i].payload[k] >= 0x20 && s21tx[i].payload[k] < 0x7F) ? s21tx[i].payload[k] : '.';
+      p[s21tx[i].len] = 0;
+      jo_object (j, NULL);
+      jo_stringf (j, "cmd", "%c%c", s21tx[i].cmd[0], s21tx[i].cmd[1]);
+      jo_string (j, "ascii", p);
+      jo_base16 (j, "hex", s21tx[i].payload, s21tx[i].len);
+      const char *res[] = { "ACK", "NAK", "no ACK", "bad", "not sent", "timeout" };
+      jo_string (j, "result", s21tx[i].res < sizeof (res) / sizeof (*res) ? res[s21tx[i].res] : "?");
+      jo_int (j, "age", now - s21tx[i].when);
+      jo_close (j);
+   }
+   jo_close (j);
    jo_object (j, "poll");       // Status of each regular query
 #define	p(x)	jo_string(j,#x,s21.x.bad?"unsupported":s21.x.ack?"ok":s21.x.nak?"nak":"off");
    p (F1) p (F2) p (F3) p (F4) p (F5) p (F6) p (F7) p (F8) p (F9) p (FA) p (FB) p (FC) p (FG) p (FK) p (FN) p (FM) p (FP) p (FQ)
@@ -2719,7 +2777,11 @@ web_diag (httpd_req_t *req)
       "</div>"   //
       "<div class=card><h2>S21 protocol</h2>"   //
       "<p class=hint>Every query Faikout sends (F… or R…) and the last raw answer (G… or S…). Rows flash when the answer changes. Unsupported means the unit refused the query several times. Number readings are sent as reversed ASCII digits, e.g. 532+ is 23.5.</p>"   //
-      "<p><input id=sq size=8 maxlength=8 placeholder='e.g. RH' style='min-height:30px;border-radius:8px;padding:0 8px'> <button type=button onclick=sendq()>Send query</button> <span id=smsg class=sub></span> <a href=/diag.json target=_blank style=float:right>raw JSON</a></p>"   //
+      "<p><input id=sq size=8 maxlength=8 placeholder='e.g. RH' style='min-height:30px;border-radius:8px;padding:0 8px'> <button type=button onclick=sendq()>Send</button> <label class=sub><input type=checkbox id=sx> expert: allow control commands (D…), these change the unit's settings</label> <span id=smsg class=sub></span> <a href=/diag.json target=_blank style=float:right>raw JSON</a></p>"   //
+      "<h2 style=margin-top:14px>Control commands sent</h2>"   //
+      "<p class=hint>Every D… command Faikout sent and how the unit answered. ACK means accepted, NAK means refused. A command can be accepted and still ignored: then the matching G… answer above does not change.</p>"   //
+      "<div style=overflow-x:auto><table class=dt id=tx><tr><th>Age</th><th>Command</th><th>Payload</th><th>Hex</th><th>Result</th></tr></table></div>"   //
+      "<h2 style=margin-top:14px>Queries</h2>"   //
       "<div style=overflow-x:auto><table class=dt id=raw><tr><th>Query</th><th>Meaning</th><th>Answer</th><th>Hex</th><th>Value</th><th>Age</th><th>Count</th><th>Changes</th><th>Status</th></tr></table></div>"   //
       "</div>"   //
       "<style>"   //
@@ -2764,6 +2826,7 @@ web_diag (httpd_req_t *req)
       "g('sugg').innerHTML=k.length?'Suggested settings: <b>'+k.map(function(x){return x+'='+want[x];}).join(', ')+'</b>. These need a restart, which happens automatically.':'No changes suggested.';"   //
       "var a=g('apply');a.disabled=!k.length||D.locked;"   //
       "if(D.locked)g('amsg').textContent='A settings password is set: change these on the Settings page instead.';"   //
+      "var t3=g('tx');while(t3.rows.length>1)t3.deleteRow(1);(D.tx||[]).forEach(function(x){var r=t3.insertRow();r.innerHTML='<td>'+fd(x.age)+'</td><td class=m>'+x.cmd+'</td><td class=m>'+esc(x.ascii)+'</td><td class=m>'+x.hex+'</td><td>'+(x.result=='ACK'?'<span class=ok>ACK</span>':'<span class=bad>'+x.result+'</span>')+'</td>';});"   //
       "var t2=g('raw'),seen={};while(t2.rows.length>1)t2.deleteRow(1);"   //
       "var resp={};D.s21.forEach(function(x){resp[x.cmd]=x;});"   //
       "var qs=Object.keys(D.poll);D.s21.forEach(function(x){var q=(x.cmd[0]=='G'?'F':x.cmd[0]=='S'?'R':'?')+x.cmd[1];var f=qs.filter(function(p){return rc(p)==x.cmd;});if(!f.length)qs.push(q);});"   //
@@ -2776,7 +2839,7 @@ web_diag (httpd_req_t *req)
       "}"   //
       "function load(q){var x=new XMLHttpRequest();x.open('GET','/diag.json'+(q||''));x.onload=function(){try{D=JSON.parse(x.responseText);}catch(e){return;}if(D.msg){if(q&&q.indexOf('send')>0)g('smsg').textContent=D.msg;else g('amsg').textContent=D.msg;}draw();};x.send();}"   //
       "function applys(){var k=Object.keys(want);if(!k.length)return;load('?set='+k.map(function(x){return x+':'+want[x];}).join(','));}"   //
-      "function sendq(){var v=g('sq').value.trim();if(v)load('?send='+encodeURIComponent(v));}"   //
+      "function sendq(){var v=g('sq').value.trim();if(v)load('?send='+encodeURIComponent(v)+(g('sx').checked?'&x=1':''));}"   //
       "load();setInterval(load,2000);"   //
       "var ws=null;"   //
       "function c(){ws=new WebSocket((location.protocol=='https:'?'wss:':'ws:')+'//'+location.host+'/status');"   //

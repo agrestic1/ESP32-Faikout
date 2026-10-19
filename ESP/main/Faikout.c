@@ -368,6 +368,126 @@ enum
 };
 const char *const hvac_action[] = { "off", "preheating", "heating", "cooling", "drying", "fan", "idle", "defrosting" };
 
+// Compressor run statistics for the web dashboard
+// Since boot, RAM only - only sent on the web socket, not on MQTT
+static struct
+{
+   uint32_t first;              // uptime when compressor state first known
+   uint32_t since;              // uptime of last compressor start/stop
+   uint32_t lastrun;            // Duration of last completed run (s)
+   uint32_t laststop;           // Duration of last completed stop (s)
+   uint32_t runtotal;           // Total run time since boot (s)
+   uint32_t starts;             // Compressor starts since boot
+   uint32_t last;               // uptime of last update
+   uint32_t minute;             // Current minute (uptime/60) for the rings below
+   uint8_t runsec[60];          // Seconds compressor ran, per minute, last hour
+   uint8_t startsmin[60];       // Compressor starts, per minute, last hour
+   int Wh0[3];                  // Energy counters at first reading (heating, cooling, outdoor)
+   uint8_t Wh0set:3;            // Which Wh0 are set
+   uint8_t known:1;             // We have seen the compressor state
+   uint8_t running:1;           // Compressor running
+   uint8_t partial:1;           // Current state started before we knew (i.e. "since" is a minimum)
+} compstats = { 0 };
+
+static void
+compstats_update (uint32_t now)
+{                               // Called once per poll, i.e. about every second
+   uint32_t delta = (compstats.last && now > compstats.last) ? now - compstats.last : 0;
+   compstats.last = now;
+   uint32_t minute = now / 60;
+   if (minute != compstats.minute)
+   {                            // New minute(s), clear the slots we move in to
+      for (uint32_t m = compstats.minute + 1; m <= minute && m <= compstats.minute + 60; m++)
+         compstats.runsec[m % 60] = compstats.startsmin[m % 60] = 0;
+      compstats.minute = minute;
+   }
+   // Energy counters at boot, so we can show energy since boot
+   const uint64_t whflag[3] = { CONTROL_Whheating, CONTROL_Whcooling, CONTROL_Whoutside };
+   const int whval[3] = { daikin.Whheating, daikin.Whcooling, daikin.Whoutside };
+   for (int n = 0; n < 3; n++)
+      if (!(compstats.Wh0set & (1 << n)) && (daikin.status_known & whflag[n]))
+      {
+         compstats.Wh0[n] = whval[n];
+         compstats.Wh0set |= (1 << n);
+      }
+   if (!(daikin.status_known & CONTROL_comp) || !daikin.online)
+      return;
+   uint8_t running = (daikin.comp > 0);
+   if (!compstats.known)
+   {                            // First reading, we don't know how long it was like this
+      compstats.known = 1;
+      compstats.partial = 1;
+      compstats.running = running;
+      compstats.first = compstats.since = now;
+      return;
+   }
+   if (running)
+   {
+      compstats.runtotal += delta;
+      uint32_t r = compstats.runsec[minute % 60] + delta;
+      compstats.runsec[minute % 60] = (r > 60 ? 60 : r);
+   }
+   if (running != compstats.running)
+   {                            // Start or stop
+      if (running)
+      {
+         compstats.starts++;
+         if (compstats.startsmin[minute % 60] < 255)
+            compstats.startsmin[minute % 60]++;
+         if (!compstats.partial)
+            compstats.laststop = now - compstats.since;
+      } else if (!compstats.partial)
+         compstats.lastrun = now - compstats.since;
+      compstats.partial = 0;
+      compstats.running = running;
+      compstats.since = now;
+   }
+}
+
+static void
+compstats_json (jo_t j)
+{                               // Add stats object for web dashboard
+   uint32_t now = uptime ();
+   jo_object (j, "stats");
+   jo_int (j, "uptime", now);
+   jo_string (j, "action", hvac_action[daikin.action]);
+   if (compstats.known)
+   {
+      jo_bool (j, "running", compstats.running);
+      jo_int (j, "for", now - compstats.since);
+      if (compstats.partial)
+         jo_bool (j, "partial", 1);
+      jo_int (j, "starts", compstats.starts);
+      if (compstats.lastrun)
+         jo_int (j, "lastrun", compstats.lastrun);
+      if (compstats.laststop)
+         jo_int (j, "laststop", compstats.laststop);
+      jo_int (j, "runtotal", compstats.runtotal);
+      uint32_t window = now - compstats.first;
+      jo_int (j, "window", window > 3600 ? 3600 : window);
+      int run = 0,
+         starts = 0;
+      jo_array (j, "hour");     // Seconds run per minute, oldest first, last is current minute
+      for (int m = 59; m >= 0; m--)
+      {
+         int n = (compstats.minute + 60 - m) % 60;
+         jo_int (j, NULL, compstats.runsec[n]);
+         run += compstats.runsec[n];
+         starts += compstats.startsmin[n];
+      }
+      jo_close (j);
+      jo_int (j, "run1h", run);
+      jo_int (j, "starts1h", starts);
+   }
+   if (compstats.Wh0set & 1)
+      jo_int (j, "Whheating", daikin.Whheating - compstats.Wh0[0]);
+   if (compstats.Wh0set & 2)
+      jo_int (j, "Whcooling", daikin.Whcooling - compstats.Wh0[1]);
+   if (compstats.Wh0set & 4)
+      jo_int (j, "Whoutside", daikin.Whoutside - compstats.Wh0[2]);
+   jo_close (j);
+}
+
 const char *
 daikin_set_value (const char *name, uint8_t *ptr, uint64_t flag, uint8_t value)
 {                               // Setting a value (uint8_t)
@@ -1827,15 +1947,65 @@ static void
 web_head (httpd_req_t *req, const char *title)
 {
    revk_web_head (req, title);
-   revk_web_send (req, "<style>"        //
-                  "body{font-family:sans-serif;background:#8cf;}"       //
-                  ".on{opacity:1;transition:1s;}"       // 
-                  ".off{opacity:0;transition:1s;}"      // 
-                  "select{min-height:34px;border-radius:34px;background-color:#ccc;border:1px solid gray;color:black;box-shadow:3px 3px 3px #0008;}"    //
-                  "input.temp{min-width:230px;}"        //
-                  "input.time{min-height:34px;min-width:64px;border-radius:34px;background-color:#ccc;border:1px solid gray;color:black;box-shadow:3px 3px 3px #0008;}" //
-                  "a.pn{min-height:34px;min-width:34px;border-radius:30px;background-color:#ccc;border:1px solid gray;color:black;box-shadow:3px 3px 3px #0008;margin:3px;padding:3px 10px;font-size:100%%;}"   //
-                  "</style><body><h1>%s</h1>", title ? : "");
+   // Note: static chunk, not printf style, so % is literal here
+   httpd_resp_sendstr_chunk (req, "<style>"     //
+      ":root{--bg:#eef3f8;--card:#fff;--fg:#1c2733;--mut:#5f6f80;--line:#dde5ee;--acc:#2b7de9;--btn:#e3e9f0;--heat:#e8590c;--cool:#1c7ed6;--idle:#868e96;--dry:#0ca678;}"   //
+      "@media(prefers-color-scheme:dark){:root{--bg:#0f151b;--card:#18212a;--fg:#e6edf3;--mut:#93a1b0;--line:#2a3541;--btn:#2a3541;}}"   //
+      "body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);background-image:none;color:var(--fg);max-width:760px;margin:0 auto;padding:10px 12px;}"   //
+      "h1{display:flex;align-items:center;gap:10px;font-size:1.5em;margin:6px 0 12px;white-space:normal;}"   //
+      "h1 span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"   //
+      "a{color:var(--acc);}"   //
+      "address{color:var(--mut);font-size:.85em;white-space:normal;}"   //
+      "hr{border:0;border-top:1px solid var(--line);}"   //
+      ".on{opacity:1;transition:1s;}"   //
+      ".off{opacity:0;transition:1s;}"   //
+      ".card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:0 0 12px;box-shadow:0 1px 3px #0000000d;overflow-x:auto;}"   //
+      ".card h2{font-size:.78em;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--mut);margin:2px 0 10px;}"   //
+      "table{border-collapse:collapse;}"   //
+      "td{padding:2px 3px;}"   //
+      "select,input.time,a.pn,input[type=submit],button{min-height:34px;border-radius:34px;background:var(--btn);border:1px solid var(--line);color:var(--fg);box-shadow:none;font-size:100%;}"   //
+      "select{padding:0 10px;}"   //
+      "a.pn{display:inline-block;min-width:34px;margin:3px;padding:3px 10px;text-align:center;line-height:26px;box-sizing:border-box;cursor:pointer;user-select:none;}"   //
+      "input.time{min-width:64px;padding:0 8px;}"   //
+      "input.temp{min-width:180px;accent-color:var(--acc);vertical-align:middle;}"   //
+      "span.slider,span.button{background:var(--btn);border:1px solid var(--line);box-shadow:none;color:var(--fg);}"   //
+      "span.button{text-align:center;padding-left:0;}"   //
+      "input:checked+.slider,input:checked+.button{background:var(--acc);border-color:var(--acc);color:#fff;}"   //
+      ".hint{font-size:.85em;color:var(--mut);padding:0 4px 10px;line-height:1.4;margin:6px 0 0;}"   //
+      "td.hint{padding-top:0;}"   //
+      "body:not(.showhelp) .help{display:none;}"   //
+      "button.helpbtn{min-width:34px;width:34px;padding:0;font-weight:bold;margin:0;}"   //
+      "body.showhelp button.helpbtn{background:var(--acc);border-color:var(--acc);color:#fff;}"   //
+      ".hero{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}"   //
+      ".lbl{font-size:.8em;color:var(--mut);}"   //
+      ".big{font-size:2.6em;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;}"   //
+      ".sub{color:var(--mut);font-size:.9em;margin-top:3px;}"   //
+      ".sub b{color:var(--fg);}"   //
+      ".hr{text-align:right;}"   //
+      ".pill{display:inline-block;padding:4px 12px;border-radius:20px;font-weight:600;font-size:.9em;color:#fff;background:var(--idle);}"   //
+      ".pill.a-heating,.pill.a-preheating{background:var(--heat);}"   //
+      ".pill.a-cooling{background:var(--cool);}"   //
+      ".pill.a-drying{background:var(--dry);}"   //
+      ".pill.a-fan{background:#1098ad;}"   //
+      ".pill.a-defrosting{background:#7048e8;}"   //
+      ".pill.a-off{background:var(--btn);color:var(--mut);}"   //
+      ".tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;margin-top:12px;}"   //
+      ".tile{background:var(--bg);border-radius:10px;padding:7px 10px;}"   //
+      ".tile span{display:block;font-size:.75em;color:var(--mut);}"   //
+      ".tile b{font-size:1.15em;font-weight:600;font-variant-numeric:tabular-nums;}"   //
+      ".tile small{display:block;color:var(--mut);font-weight:normal;font-size:.65em;}"   //
+      ".cstate{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}"   //
+      ".cstate b{font-size:1.2em;}"   //
+      ".dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--idle);margin-right:7px;}"   //
+      ".dot.run{background:var(--dry);box-shadow:0 0 0 3px #0ca67840;}"   //
+      ".bars{display:flex;align-items:flex-end;gap:1px;height:44px;margin-top:12px;border-bottom:1px solid var(--line);}"   //
+      ".bars i{flex:1;background:var(--acc);border-radius:2px 2px 0 0;}"   //
+      ".axis{display:flex;justify-content:space-between;font-size:.72em;color:var(--mut);margin-top:3px;}"   //
+      "@media(max-width:560px){body{padding:8px;}.card{padding:10px;}.switch,.box{min-width:54px;}td{padding:1px;}input.temp{min-width:120px;}}"   //
+      "</style>");
+   revk_web_send (req,
+                  "<h1><span>%s</span><button type=button class=helpbtn title=\"Show or hide explanations\" onclick=\"hh()\">?</button></h1>",
+                  title ? : "");
 }
 
 static esp_err_t
@@ -1900,8 +2070,54 @@ web_control (httpd_req_t *req)
              *instance ? instance :
 #endif
              hostname == revk_id ? revk_app : hostname);
-   revk_web_send (req,
-                  "<div id=top class=off><form name=F class='xautoe xautor xslave xloopback xantifreeze xcontrol xoffline'><table id=live>");
+   revk_web_send (req, "<div id=top class=off>");
+   // Dashboard (static, filled in by dash() in the script below)
+   httpd_resp_sendstr_chunk (req,       //
+      "<div class=card id=dash>"   //
+      "<div class=hero>"   //
+      "<div><div class=lbl>Room temperature <span id=d_src></span></div><div class=big id=d_room>---</div>"   //
+      "<div class=sub>Target <b id=d_target>---</b> <span id=d_band></span></div></div>"   //
+      "<div class=hr><span id=d_action class='pill a-off'>---</span><div class=sub id=d_acset></div></div>"   //
+      "</div>"   //
+      "<div class=tiles>"   //
+      "<div class=tile id=t_comp style=display:none><span>Compressor</span><b id=d_comp></b></div>"   //
+      "<div class=tile id=t_power style=display:none><span>Power</span><b id=d_power></b></div>"   //
+      "<div class=tile id=t_fanrpm style=display:none><span>Indoor fan</span><b id=d_fanrpm></b></div>"   //
+      "<div class=tile id=t_outside style=display:none><span>Outside</span><b id=d_outside></b></div>"   //
+      "<div class=tile id=t_inlet style=display:none><span>Inlet air</span><b id=d_inlet></b></div>"   //
+      "<div class=tile id=t_home style=display:none><span>A/C room sensor</span><b id=d_home></b></div>"   //
+      "<div class=tile id=t_liquid style=display:none><span>Liquid pipe</span><b id=d_liquid></b></div>"   //
+      "<div class=tile id=t_hum style=display:none><span>Humidity</span><b id=d_hum></b></div>"   //
+      "<div class=tile id=t_demand style=display:none><span>Demand limit</span><b id=d_demand></b></div>"   //
+      "</div>"   //
+      "<p class='hint help'>Room temperature is the value Faikout regulates on: an external sensor if one is configured (BLE or MQTT), otherwise the A/C's own room sensor. The action shows what the unit (or Faikout auto) is currently trying to do. Compressor is the inverter frequency, 0 means stopped. Power is the electrical consumption reported by the unit (10&nbsp;W steps, not on all models). Liquid pipe is the refrigerant temperature at the indoor coil: warm when heating, cold when cooling.</p>"   //
+      "</div>"   //
+      "<div class=card id=d_compcard style=display:none>"   //
+      "<h2>Compressor</h2>"   //
+      "<div class=cstate><span><i class=dot id=d_dot></i><b id=d_cstate></b></span><span class=sub id=d_cfor></span></div>"   //
+      "<div class=bars id=d_bars></div><div class=axis><span>60 min ago</span><span>now</span></div>"   //
+      "<div class=tiles>"   //
+      "<div class=tile><span>Starts, last hour</span><b id=d_st1h></b></div>"   //
+      "<div class=tile><span>Running, last hour</span><b id=d_run1h></b></div>"   //
+      "<div class=tile id=t_lastrun style=display:none><span>Last run</span><b id=d_lastrun></b></div>"   //
+      "<div class=tile id=t_laststop style=display:none><span>Last pause</span><b id=d_laststop></b></div>"   //
+      "<div class=tile><span>Starts since restart</span><b id=d_starts></b></div>"   //
+      "<div class=tile><span>Run time since restart</span><b id=d_runtotal></b></div>"   //
+      "</div>"   //
+      "<p class='hint help'>Each bar is one minute; its height shows how many seconds of that minute the compressor was running. Long unbroken blocks at low frequency are the quiet and efficient way to run an inverter; many short blocks with gaps mean the unit is cycling on and off. All statistics count from the last Faikout restart and are not stored.</p>"   //
+      "</div>"   //
+      "<div class=card id=d_ecard style=display:none>"   //
+      "<h2>Energy since restart</h2>"   //
+      "<div class=tiles>"   //
+      "<div class=tile id=t_eheat style=display:none><span>Heating</span><b id=d_eheat></b></div>"   //
+      "<div class=tile id=t_ecool style=display:none><span>Cooling</span><b id=d_ecool></b></div>"   //
+      "<div class=tile id=t_eout style=display:none><span>Outdoor unit</span><b id=d_eout></b></div>"   //
+      "</div>"   //
+      "<p class='hint help'>From the unit's own energy counters, which count in 0.1&nbsp;kWh steps. The small figure is the lifetime total stored in the unit.</p>"   //
+      "</div>"   //
+      "<div class=card><h2>Controls</h2>"   //
+      "");
+   revk_web_send (req, "<form name=F class='xautoe xautor xslave xloopback xantifreeze xcontrol xoffline'><table id=live>");
    void tre (void)
    {
       revk_web_send (req, "</tr>");
@@ -1968,45 +2184,46 @@ web_control (httpd_req_t *req)
                      field, min, field, field, step, min, max, step, field, field, field, max, field, field, step, field);
       addf (tag);
    }
+   void addhelp (const char *class, const char *text)
+   {                            // Explanation row, only shown when help (?) is selected
+      revk_web_send (req, "<tr class='help %s'><td></td><td colspan=7 class=hint>%s</td></tr>", class ? : "", text);
+   }
    tr (NULL);
    addb ("⏼", "power", "Main\npower");
    tre ();
+   addhelp (NULL, "Main power: switches the indoor unit on or off, just like the remote control.");
    if (noauto)
       add (NULL, "Mode", "mode", "Heat", "H", "Cool", "C", "Dry", "D", "Fan", "F", NULL);
    else
       add (NULL, "Mode", "mode", "Auto", "A", "Heat", "H", "Cool", "C", "Dry", "D", "Fan", "F", NULL);
+   addhelp (NULL,
+            "Mode: Heat, Cool, Dry (dehumidify) and Fan (air circulation only) fix the operating mode. "
+            "Auto lets the A/C choose between heating and cooling by itself. "
+            "With Faikout auto (below) active, Faikout switches between Heat and Cool instead.");
    if (fan_5_auto ())
       add (NULL, "Fan", "fan", "1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "Night", "Q", "Auto", "A", NULL);
    else if (fan_3_auto ())
       add (NULL, "Fan", "fan", "Low", "1", "Mid", "3", "High", "5", "Auto", "A", "Quiet", "Q", NULL);
    else
       add (NULL, "Fan", "fan", "Low", "1", "Mid", "3", "High", "5", NULL);
+   addhelp (NULL,
+            "Fan: indoor fan speed. Auto lets the unit adapt the speed to the demand; Night/Quiet is the quietest setting. "
+            "Lower speeds are quieter but move less heat, so the room takes longer to reach the target.");
    if (!nohumidify)
       add (NULL, "Hum", "humidify", "Off", "X", "Low", "L", "Std", "S", "High", "H", "Cont", "C", NULL);
    addslider (NULL, "Set", "temp", tmin, tmax, get_temp_step ());
+   addhelp (NULL,
+            "Set: the target temperature sent to the A/C. When Faikout auto is active (marked ✷) Faikout changes this value itself "
+            "to push the unit into or out of heating/cooling, so adjust the Auto target below instead.");
+   // Temperatures are shown in the dashboard above
+#ifdef ELA
    void addt (const char *tag, const char *help)
    {
       revk_web_send (req, "<td title=\"%s\" align=right>%s<br><span id=\"%s\">…</span></td>", help, tag, tag);
    }
-   tr (NULL);
-   revk_web_send (req, "<td>Temps</td>");
-   if (daikin.status_known & CONTROL_inlet)
-      addt ("Inlet", "Inlet temperature");
-   if (daikin.status_known & CONTROL_home)
-      addt ("Home", "Inlet temperature");
-   if (daikin.status_known & CONTROL_hum)
-      addt ("Humidity", "Indoor humidity");
-   if (daikin.status_known & CONTROL_liquid)
-      addt ("Liquid", "Liquid coolant temperature");
-   if (daikin.status_known & CONTROL_outside)
-      addt ("Outside", "Outside temperature");
-   if ((daikin.status_known & CONTROL_env) && !ble_sensor_connected ())
-      addt ("Env", "External reference temperature");
-#ifdef ELA
    if (ble_sensor_enabled ())
    {
       xSemaphoreTake (blemutex, portMAX_DELAY);
-      tre ();
       tr (NULL);
       revk_web_send (req, "<td>%s</td>", bletemp && bletemp->faikoutset ? "BLE<br>Remote" : "BLE");
       if (!bletemp || bletemp->tempset)
@@ -2016,11 +2233,16 @@ web_control (httpd_req_t *req)
       if (!bletemp || bletemp->batset || bletemp->voltset)
          addt ("Bat", "External BLE battery");
       xSemaphoreGive (blemutex);
+      tre ();
    }
 #endif
-   tre ();
    if (daikin.status_known & CONTROL_demand)
+   {
       addslider (NULL, "Demand", "demand", 30, 100, "5");
+      addhelp (NULL,
+               "Demand: limits the maximum compressor output (30 to 100 percent). "
+               "Lower values cap power consumption and noise, at the cost of heating/cooling capacity.");
+   }
    if (daikin.status_known & (CONTROL_econo | CONTROL_powerful | CONTROL_led))
    {
       tr (NULL);
@@ -2031,6 +2253,9 @@ web_control (httpd_req_t *req)
       if (daikin.status_known & CONTROL_led)
          addb ("💡", "led", "LED\nhigh");
       tre ();
+      addhelp (NULL,
+               "♻ Econo limits the power consumption. 💪 Powerful runs at maximum output for about 20 minutes, then returns to normal. "
+               "💡 LED sets the brightness of the indoor unit display.");
    }
    if (daikin.status_known & (CONTROL_swingv | CONTROL_swingh | CONTROL_comfort))
    {
@@ -2042,6 +2267,9 @@ web_control (httpd_req_t *req)
       if (daikin.status_known & CONTROL_comfort)
          addb ("🧸", "comfort", "Comfort\nmode");
       tre ();
+      addhelp (NULL,
+               "↕ ↔ Swing moves the louvres continuously up/down or left/right. "
+               "🧸 Comfort airflow avoids blowing directly at people (along the ceiling when cooling, towards the floor when heating).");
    }
    if (daikin.status_known & (CONTROL_streamer | CONTROL_sensor | CONTROL_quiet))
    {
@@ -2053,6 +2281,9 @@ web_control (httpd_req_t *req)
       if (daikin.status_known & CONTROL_quiet)
          addb ("🤫", "quiet", "Quiet\noutdoor");
       tre ();
+      addhelp (NULL,
+               "🦠 Streamer: air purifying function. 🙆 Sensor: presence sensor (Intelligent Eye) reduces output when nobody is in the room. "
+               "🤫 Quiet outdoor lowers the outdoor unit noise, which also reduces capacity.");
    }
    revk_web_send (req, "</table>"       //
                   "<p class=offline><b>System is offline (no data tx/rx).</b></p>"      //
@@ -2077,16 +2308,28 @@ web_control (httpd_req_t *req)
                         "<td align=right>%s</td><td><input class=time type=time title=\"Set 00:00 to disable\" id='%s' onchange=\"w('%s',this.value);\"></td>",
                         tag, field, field);
       }
-      revk_web_send (req, "<div class=remote><hr><table>");
+      revk_web_send (req, "<div class=remote><h2 style='margin-top:16px'>Faikout auto</h2><table>");
       tr (NULL);
       if (!*password)
       {
          addb ("Enable", "autoe", "Enable");
          revk_web_send (req, "<td colspan=4>Auto functions...</td>");
+         tre ();
+         addhelp (NULL,
+                  "Enable: master switch for all Faikout auto functions below "
+                  "(auto temperature control, timers and automatic on/off).");
       }
       add ("autoe", "Auto temp", "autor", "Off", "0", fahrenheit ? "±0.9℉" : "±½℃", "0.5",
            fahrenheit ? "±1.8℉" : "±1℃", "1", fahrenheit ? "±3.6℉" : "±2℃", "2", NULL);
+      addhelp ("autoe",
+               "Auto temp: instead of relying on the A/C's own thermostat, Faikout regulates the room temperature itself "
+               "and steers the unit by adjusting its setpoint. The ± value is the band around the auto target: "
+               "a wider band means fewer compressor starts and longer quiet pauses, a narrower band keeps the temperature tighter. "
+               "Off disables this.");
       addslider ("autoe autor", "Auto target", "autot", tmin, tmax, get_temp_step ());
+      addhelp ("autoe autor",
+               "Auto target: the room temperature you want. Faikout heats or cools until the room is inside the band, "
+               "then backs the A/C setpoint off so the unit idles.");
 #ifdef ELA
       if (bleenable && !*password)
       {                         // BLE setting needs password
@@ -2103,9 +2346,14 @@ web_control (httpd_req_t *req)
          addb ("Auto ⏼", "autop", "Auto\non/off");
       }
       tre ();
+      if (!*password)
+         addhelp ("autoe",
+                  "On / Off: daily times to switch the unit on and off (set 00:00 to disable). "
+                  "Auto ⏼: switches the unit on or off by itself when the room stays outside or inside the band for a while.");
       revk_web_send (req, "</table></div>");
    }
    revk_web_send (req, "</form>"        //
+                  "</div>"      // card
                   "</div>"      //
                   "<style>"     //
                   ".xautoe .autoe,"     //
@@ -2182,10 +2430,66 @@ web_control (httpd_req_t *req)
                   "s('Fan',(o.antifreeze?'❄':'')+(o.control?'✷':'')+(o.fanrpm?' '+o.fanrpm+'RPM':'')+(o.consumption?' '+o.consumption+'W':''));"    //
                   "e('fan',o.fan);"     //
                   "if(o.shutdown){reboot=true;s('shutdown','Restarting: '+o.shutdown);g('shutdown').style.display='';};"        //
+                  "dash(o);"    //
                   "};};"        //
                   "c();"        //
                   "setInterval(function() {if(!ws.readyState)ws.close();else if(ws.readyState==1)ws.send('');},1000);"  //
                   "</script>", fahrenheit ? "Math.round(10*((v*9/5)+32))/10+'℉'" : "v+'℃'");
+   // Dashboard script (static chunk)
+   httpd_resp_sendstr_chunk (req,       //
+      "<script>"   //
+      "function hh(){var c=document.body.classList;c.toggle('showhelp');try{localStorage.faikouthelp=c.contains('showhelp')?1:0;}catch(e){}}"   //
+      "try{if(localStorage.faikouthelp==1)document.body.classList.add('showhelp');}catch(e){}"   //
+      "function fd(x){if(x==null)return'---';x=Math.round(x);if(x<60)return x+' s';var m=Math.floor(x/60);if(m<60)return m+' min';var h=Math.floor(m/60);m%=60;if(h<48)return h+' h '+(m<10?'0':'')+m+' min';return Math.floor(h/24)+' d '+(h%24)+' h';}"   //
+      "function kwh(w){return (w/1000).toFixed(1)+' kWh';}"   //
+      "function dt(id,v,h){var t=g('t_'+id),d=g('d_'+id);if(t)t.style.display=(v==null?'none':'');if(d&&v!=null){if(h)d.innerHTML=v;else d.textContent=v;}}"   //
+      "function tc(v){return v==null?null:cf(v);}"   //
+      "var an={off:'Off',preheating:'Preheating',heating:'Heating',cooling:'Cooling',drying:'Drying',fan:'Fan only',idle:'Idle',defrosting:'Defrosting'};"   //
+      "function dash(o){"   //
+      "var st=o.stats||{},fh=cf(0).indexOf('℉')>=0;"   //
+      "var r=o.env!=null?o.env:o.home!=null?o.home:o.inlet;"   //
+      "s('d_room',r!=null?cf(r):'---');"   //
+      "s('d_src',o.env!=null?'(external sensor)':o.home!=null?'(A/C sensor)':o.inlet!=null?'(inlet air)':'');"   //
+      "var au=o.autoe&&o.autor>0&&!o.remote;"   //
+      "var tg=au?o.autot:o.temp;"   //
+      "s('d_target',tg?cf(tg):'---');"   //
+      "s('d_band',au?'· Faikout auto ±'+(fh?Math.round(o.autor*18)/10+'℉':o.autor+'℃'):'');"   //
+      "var a=o.online===false?'off':(o.power===false?'off':(st.action||'idle'));"   //
+      "var p=g('d_action');p.textContent=o.online===false?'Offline':(an[a]||a);p.className='pill a-'+a;"   //
+      "s('d_acset',au&&o.temp&&o.power?'A/C setpoint '+cf(o.temp)+' ✷':'');"   //
+      "dt('comp',o.comp!=null?o.comp+' Hz':null);"   //
+      "dt('power',o.consumption!=null?o.consumption+' W':null);"   //
+      "dt('fanrpm',o.fanrpm!=null?o.fanrpm+' rpm':null);"   //
+      "dt('outside',tc(o.outside));"   //
+      "dt('inlet',tc(o.inlet));"   //
+      "dt('home',o.env!=null?tc(o.home):null);"   //
+      "dt('liquid',tc(o.liquid));"   //
+      "dt('hum',o.hum!=null?o.hum+' %':null);"   //
+      "dt('demand',o.demand!=null&&o.demand<100?o.demand+' %':null);"   //
+      "if(st.running!=null){"   //
+      "g('d_compcard').style.display='';"   //
+      "g('d_dot').className='dot'+(st.running?' run':'');"   //
+      "s('d_cstate',st.running?'Running'+(o.comp?' at '+o.comp+' Hz':''):'Stopped');"   //
+      "s('d_cfor','for '+(st.partial?'at least ':'')+fd(st['for']));"   //
+      "var b=g('d_bars'),h=st.hour||[],i,v;"   //
+      "if(!b.children.length)for(i=0;i<60;i++)b.appendChild(document.createElement('i'));"   //
+      "for(i=0;i<60;i++){v=h[i]||0;b.children[i].style.height=(v*100/60)+'%';b.children[i].title=(59-i?(59-i)+' min ago: ':'this minute: ')+v+' s';}"   //
+      "s('d_st1h',st.starts1h);"   //
+      "if(st.window)g('d_run1h').innerHTML=Math.round(st.run1h*100/st.window)+' %<small>'+fd(st.run1h)+'</small>';"   //
+      "dt('lastrun',st.lastrun!=null?fd(st.lastrun):null);"   //
+      "dt('laststop',st.laststop!=null?fd(st.laststop):null);"   //
+      "s('d_starts',st.starts);"   //
+      "s('d_runtotal',fd(st.runtotal));"   //
+      "}"   //
+      "var e=0;"   //
+      "function en(id,v,l){if(v!=null){e=1;dt(id,kwh(v)+(l!=null?'<small>lifetime '+Math.round(l/1000)+' kWh</small>':''),1);}else dt(id,null);}"   //
+      "en('eheat',st.Whheating,o.Whheating);"   //
+      "en('ecool',st.Whcooling,o.Whcooling);"   //
+      "en('eout',st.Whoutside,o.Whoutside);"   //
+      "g('d_ecard').style.display=e?'':'none';"   //
+      "}"   //
+      "</script>"   //
+      "");
    return revk_web_foot (req, 0, websettings, b.protocol_set ? proto_name () : NULL);
 }
 
@@ -2244,6 +2548,7 @@ web_status (httpd_req_t *req)
    esp_err_t status (void)
    {
       jo_t j = daikin_status ();
+      compstats_json (j);
       const char *reason;
       int t = revk_shutting_down (&reason);
       if (t)
@@ -4120,6 +4425,7 @@ app_main ()
 	 		daikin.total##name+=daikin.name;
 #include "acextras.m"
          daikin.statscount++;
+         compstats_update (uptime ());
          if (!daikin.control_changed)
             daikin.control_count = 0;
          else if (daikin.control_count++ > s21tries)

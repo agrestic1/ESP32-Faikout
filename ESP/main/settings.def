@@ -38,6 +38,7 @@ bit	no.antifreeze								// Unit does not have antifreeze mode
 bit	no.humidity								// Unit does not have humidity
 bit	no.humidify	1							// Unit does not have humidifier
 bit	no.hourly	1		.live					// Do not do hourly S21 poll (DH)
+bit	no.energy								// Unit has no outdoor energy meter (S21 FM stays 0): do not poll or report it
 
 bit	no.faikoutauto			.live.old="nofaikinauto"		// Do not show Faikout auto controls (unless already set up and no password)
 bit	no.hvacaction	1							// Do not track/report hvac_action for Faikout auto mode in HA

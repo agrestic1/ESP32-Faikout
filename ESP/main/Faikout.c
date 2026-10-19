@@ -857,7 +857,7 @@ daikin_s21_response (uint8_t cmd, uint8_t cmd2, int len, uint8_t *payload)
          }
          break;
       case 'M':                // Power meter
-         if (check_length (cmd, cmd2, len, 4, payload))
+         if (!noenergy && check_length (cmd, cmd2, len, 4, payload))
             report_int (Whoutside, s21_decode_hex_sensor (payload) * 100);      // 100Wh units
          break;
       case 'U':                // Per device power
@@ -910,7 +910,8 @@ daikin_s21_response (uint8_t cmd, uint8_t cmd2, int len, uint8_t *payload)
                report_int (fanrpm, v * 10);
                break;
             case 'd':          // Compressor
-               report_int (comp, v);
+               if (v < 999)     // Some units always answer 999 = no compressor data, then never report it (no MQTT/HA entity)
+                  report_int (comp, v);
                break;
             case 'N':          // Angle vertical swing
                report_int (anglev, v);
@@ -2555,7 +2556,7 @@ diag_send (const char *q)
 
 static const char *const diag_settings[] = {
    "noecono", "nopowerful", "nocomfort", "nostreamer", "nosensor", "noquiet", "noled",
-   "noswingv", "noswingh", "nodemand", "nohumidity", "nohumidify", NULL
+   "noswingv", "noswingh", "nodemand", "nohumidity", "nohumidify", "noenergy", NULL
 };
 
 static const char *
@@ -2652,6 +2653,7 @@ web_diag_json (httpd_req_t *req)
    feat ("demand", CONTROL_demand, daikin.demand, "nodemand", nodemand);
    feat ("humidity", CONTROL_hum, (int) daikin.hum, "nohumidity", nohumidity);
    feat ("humidify", CONTROL_humidify, daikin.humidify, "nohumidify", nohumidify);
+   feat ("energy", CONTROL_Whoutside, daikin.Whoutside / 100, "noenergy", noenergy);
    jo_close (j);
    uint32_t now = uptime ();
    jo_array (j, "s21");
@@ -2726,7 +2728,7 @@ web_diag (httpd_req_t *req)
       "function hh(){var c=document.body.classList;c.toggle('showhelp');try{localStorage.faikouthelp=c.contains('showhelp')?1:0;}catch(e){}}"   //
       "try{if(localStorage.faikouthelp==1)document.body.classList.add('showhelp');}catch(e){}"   //
       "function esc(t){return String(t).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}"   //
-      "var FL={econo:'♻ Econo',powerful:'💪 Powerful',comfort:'🧸 Comfort airflow',streamer:'🦠 Streamer',sensor:'🙆 Presence sensor',quiet:'🤫 Quiet outdoor',led:'💡 LED brightness',swingv:'↕ Vertical swing',swingh:'↔ Horizontal swing',demand:'Demand limit',humidity:'Humidity sensor',humidify:'Humidifier'};"   //
+      "var FL={econo:'♻ Econo',powerful:'💪 Powerful',comfort:'🧸 Comfort airflow',streamer:'🦠 Streamer',sensor:'🙆 Presence sensor',quiet:'🤫 Quiet outdoor',led:'💡 LED brightness',swingv:'↕ Vertical swing',swingh:'↔ Horizontal swing',demand:'Demand limit',humidity:'Humidity sensor',humidify:'Humidifier',energy:'Outdoor energy meter (0.1 kWh)'};"   //
       "var M={F1:'Power, mode, setpoint, fan',F2:'Feature flags',F3:'Timer / powerful (older units)',F4:'Unknown',F5:'Swing, humidifier',F6:'Powerful, comfort, quiet, streamer, sensor, LED',F7:'Demand, econo',F8:'Protocol version',F9:'Room and outside temp (short form)',FA:'Unknown',FB:'Unknown',FC:'Model code',FG:'Unknown',FK:'Unknown',FN:'Unknown',FM:'Outdoor energy meter (0.1 kWh)',FP:'Unknown',FQ:'Unknown',FS:'Unknown',FT:'Unknown',FU04:'Energy heating/cooling (0.1 kWh)',FX60:'Power consumption (10 W)',DH1000:'Hourly poll',RH:'Room temperature',RI:'Liquid pipe temperature',Ra:'Outside temperature',RL:'Fan speed (x10 rpm)',Rd:'Compressor frequency (Hz)',RN:'Louvre angle',RG:'Fan mode',Re:'Humidity',RM:'Unknown',RX:'Unknown',RD:'Unknown'};"   //
       "function rc(q){return (q[0]=='F'?'G':q[0]=='R'?'S':q[0]=='D'?'E':q[0])+q[1];}"   //
       "function num(a){if(!/^[0-9]{3}[-+]$/.test(a))return'';var v=+(a[2]+a[1]+a[0]);if(a[3]=='-')v=-v;return v;}"   //
@@ -4485,7 +4487,8 @@ app_main ()
                   slowcycle++;  // Skipped step
                   __attribute__((fallthrough));
                case 7:
-                  poll (F, M,); // Outside energy
+                  if (!noenergy)
+                     poll (F, M,);      // Outside energy
                   break;
                case 8:
                   poll (F, U, 04);      // Inside energy

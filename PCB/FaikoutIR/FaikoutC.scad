@@ -1,6 +1,6 @@
 // Generated case design for FaikoutPOE/Faikout.kicad_pcb
 // By https://codeberg.org/RevK/PCBCase
-// Generated 2026-10-20 10:09:37
+// Generated 2026-10-20 12:38:04
 // title:	Faikout
 //
 
@@ -44,10 +44,10 @@ module part_C9(part=true,hole=false,block=false,punch=false)
 {
 translate([14.750000,1.050000,1.600000])m0(part,hole,block,punch,casetop); // C9
 };
-module D1(){translate([14.177500,3.100000,1.600000])children();}
+module D1(){translate([14.300000,3.100000,1.600000])children();}
 module part_D1(part=true,hole=false,block=false,punch=false)
 {
-translate([14.177500,3.100000,1.600000])m1(part,hole,block,punch,casetop); // D1
+translate([14.300000,3.100000,1.600000])m1(part,hole,block,punch,casetop); // D1
 };
 module C1(){translate([15.000000,-4.300000,1.600000])rotate([0,0,-90.000000])children();}
 module part_C1(part=true,hole=false,block=false,punch=false)
@@ -324,10 +324,10 @@ module part_J1(part=true,hole=false,block=false,punch=false)
 {
 translate([9.500000,-27.000000,1.600000])m21(part,hole,block,punch,casetop); // J1
 };
-module C18(){translate([8.900000,10.900000,1.600000])rotate([0,0,180.000000])children();}
+module C18(){translate([8.700000,10.900000,1.600000])rotate([0,0,180.000000])children();}
 module part_C18(part=true,hole=false,block=false,punch=false)
 {
-translate([8.900000,10.900000,1.600000])rotate([0,0,180.000000])m22(part,hole,block,punch,casetop); // C18
+translate([8.700000,10.900000,1.600000])rotate([0,0,180.000000])m22(part,hole,block,punch,casetop); // C18
 };
 module D10(){translate([-6.300000,23.400000,1.600000])rotate([0,0,90.000000])children();}
 module part_D10(part=true,hole=false,block=false,punch=false)

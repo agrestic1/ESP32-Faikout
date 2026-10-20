@@ -1,6 +1,6 @@
 // Generated case design for FaikoutETH/Faikout.kicad_pcb
 // By https://codeberg.org/RevK/PCBCase
-// Generated 2026-10-20 10:13:40
+// Generated 2026-10-20 12:38:04
 // title:	Faikout
 // company:	Adrian Kennard, Andrews & Arnold Ltd
 //
@@ -66,10 +66,10 @@ module part_R6(part=true,hole=false,block=false,punch=false)
 {
 translate([1.425000,3.100000,1.600000])rotate([0,0,180.000000])m0(part,hole,block,punch,casetop); // R1
 };
-module D5(){translate([-8.456250,-0.600000,1.600000])rotate([0,0,-90.000000])children();}
+module D5(){translate([-8.500000,-0.500000,1.600000])rotate([0,0,-90.000000])children();}
 module part_D5(part=true,hole=false,block=false,punch=false)
 {
-translate([-8.456250,-0.600000,1.600000])rotate([0,0,-90.000000])m2(part,hole,block,punch,casetop); // D5
+translate([-8.500000,-0.500000,1.600000])rotate([0,0,-90.000000])m2(part,hole,block,punch,casetop); // D5
 };
 module J2(){translate([15.000000,10.000000,1.600000])rotate([0,0,-90.000000])children();}
 module part_J2(part=true,hole=false,block=false,punch=false)
@@ -132,10 +132,10 @@ module part_C21(part=true,hole=false,block=false,punch=false)
 {
 translate([-15.556250,-4.800000,1.600000])m3(part,hole,block,punch,casetop); // C26
 };
-module R7(){translate([-9.056250,-0.700000,1.600000])rotate([0,0,-90.000000])children();}
+module R7(){translate([-9.100000,-0.500000,1.600000])rotate([0,0,-90.000000])children();}
 module part_R7(part=true,hole=false,block=false,punch=false)
 {
-translate([-9.056250,-0.700000,1.600000])rotate([0,0,-90.000000])m0(part,hole,block,punch,casetop); // R1
+translate([-9.100000,-0.500000,1.600000])rotate([0,0,-90.000000])m0(part,hole,block,punch,casetop); // R1
 };
 module C2(){translate([4.000000,4.925000,1.600000])rotate([0,0,90.000000])children();}
 module part_C2(part=true,hole=false,block=false,punch=false)
@@ -182,10 +182,10 @@ module part_C1(part=true,hole=false,block=false,punch=false)
 {
 translate([4.150000,1.750000,1.600000])rotate([0,0,180.000000])m8(part,hole,block,punch,casetop); // C1
 };
-module C20(){translate([-10.456250,-0.400000,1.600000])rotate([0,0,180.000000])children();}
+module C20(){translate([-10.250000,-0.500000,1.600000])rotate([0,0,90.000000])children();}
 module part_C20(part=true,hole=false,block=false,punch=false)
 {
-translate([-10.456250,-0.400000,1.600000])rotate([0,0,180.000000])m3(part,hole,block,punch,casetop); // C26
+translate([-10.250000,-0.500000,1.600000])rotate([0,0,90.000000])m3(part,hole,block,punch,casetop); // C26
 };
 module R3(){translate([-0.429742,17.200000,1.600000])rotate([0,0,180.000000])children();}
 module part_R3(part=true,hole=false,block=false,punch=false)
@@ -226,10 +226,10 @@ module part_C25(part=true,hole=false,block=false,punch=false)
 {
 translate([-9.156250,-14.800000,1.600000])rotate([0,0,90.000000])m4(part,hole,block,punch,casetop); // C23
 };
-module C10(){translate([-13.425000,-13.500000,1.600000])rotate([0,0,-90.000000])children();}
+module C10(){translate([-13.750000,-13.750000,1.600000])children();}
 module part_C10(part=true,hole=false,block=false,punch=false)
 {
-translate([-13.425000,-13.500000,1.600000])rotate([0,0,-90.000000])m4(part,hole,block,punch,casetop); // C23
+translate([-13.750000,-13.750000,1.600000])m4(part,hole,block,punch,casetop); // C23
 };
 module C22(){translate([-15.556250,-5.400000,1.600000])children();}
 module part_C22(part=true,hole=false,block=false,punch=false)
@@ -301,10 +301,10 @@ module part_FB4(part=true,hole=false,block=false,punch=false)
 {
 translate([-7.256250,-15.300000,1.600000])m11(part,hole,block,punch,casetop); // FB3
 };
-module D6(){translate([-9.556250,-0.600000,1.600000])rotate([0,0,-90.000000])children();}
+module D6(){translate([-9.700000,-0.500000,1.600000])rotate([0,0,-90.000000])children();}
 module part_D6(part=true,hole=false,block=false,punch=false)
 {
-translate([-9.556250,-0.600000,1.600000])rotate([0,0,-90.000000])m2(part,hole,block,punch,casetop); // D5
+translate([-9.700000,-0.500000,1.600000])rotate([0,0,-90.000000])m2(part,hole,block,punch,casetop); // D5
 };
 module J4(){translate([12.000000,-8.000000,1.600000])rotate([0,0,90.000000])children();}
 module part_J4(part=true,hole=false,block=false,punch=false)

@@ -50,15 +50,15 @@ For support, see issues.
 
 Always propely isolate power before opening your air-con. Take care as dangerous voltages. Some connector types have dangerous voltage in operation.
 
-### Ethernet
+### Ethernet (and WiFi)
 
 The Ethernet board has an RJ45 10/100 Ethernet connector for improved reliability and privacy. The Ethernet has an isolating transformer and clearances, but I have to stress **this is a prototype/dev board for specialist/hobbyist use only, and is NOT certified for grid power safety isolation. DO NOT USE WITH X403 CONNECTOR or any connector with dangerous voltages.**
 
-### PoE Ethernet (design not finished)
+### PoE Ethernet (and WiFi)
 
 The PoE Ethernet board has an RJ45 10/100 Ethernet connector for improved reliability and privacy, with PoE power for the Faikout module. The PoE power module has electrical isolation. The board also has opto isolators for the S21 connection, electrically isolating it from the air conditioning unit. This adds extra layers of safety, however I have to stress **this is a prototype/dev board for specialist/hobbyist use only, and is NOT certified for grid power safety isolation.**
 
-Design now works, and boards on order.
+*Note that Ethernet uses more power - there are some Daikin models with much less power from the air-con, for these PoE may be a better choice for Ethernet use, as the main board (and Ethernet chip) is powered from the PoE, and not the air-con.*
 
 ## PCB and case
 

@@ -26,6 +26,12 @@ This is an open source project, but bear in mind you cannot sell boards bearing 
 
 Note the name change from Faikin to Faikout as Daikin complained to Amazon and caused a lot of issues. As such Faikout is now a registered trademark to avoid such issues.
 
+## Home Assistant Integration
+
+There has been a lot of work on integrating with Home Assistante as a climate device, and other sensors. This is all based on using MQTT (either HA mosquitto broker, or a broker to which HA also connects). This provides real time responses and sensor data and works very well.
+
+In addition, for other management systems than HA, the *legacy* Daikin local HTTP URLs are also supported to some extent. The support coverage is not as good, and maintence of this is less of a priority - but as always (human) suggestions and pull requests are welcome in this area. If you are using the old Daikin HA integration which uses these legacy HTTP URLs, please update to using MQTT. The config is automatic over MQTT - you just have to set the broken, username, and password. 
+
 ## Further manuals / links
 
 - [Work in progress / release notes](/RevK/ESP32-Faikout/wiki/Work-in-progress)

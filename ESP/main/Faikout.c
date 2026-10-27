@@ -2564,6 +2564,7 @@ legacy_web_get_control_info (httpd_req_t *req)
    jo_int (j, "dfdh", 0);
    jo_int (j, "dmnd_run", 0);
    jo_int (j, "en_demand", (daikin.status_known & CONTROL_demand) && daikin.demand < 100 ? 1 : 0);
+   jo_int (j, "max_pow", (daikin.status_known & CONTROL_demand) ? daikin.demand : 0);
    return legacy_send (req, &j);
 }
 

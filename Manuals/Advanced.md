@@ -84,6 +84,15 @@ When remote working `autop` is assumed if `autoptemp` is not `0`.
 
 In addition to the above, `env` in `control` you can set `autotopic` to subscribe to, and `autopayload` as the field name in a JSON payload in that topic, which is sent periodically will set the reference temperature.
 
+### Heating / cooling delta
+
+Many units do not end up at the set point they are given, e.g. when heating the room settles some degrees above it. The `heatdelta` (heating) and `cooldelta` (cooling) settings (℃, one decimal, default `0`) say how much the room ends up *above* the set point (negative if below). The target you set (web page, Home Assistant, MQTT `temp`, legacy API) is then the room temperature you want, and the set point sent to the aircon is the target minus the delta, e.g. a target of 20℃ with `heatdelta` of `3` sends 17℃. The set point sent is shown as *A/C* next to the *Set* slider and as *A/C setpoint* in the dashboard, reported as `actarget` in the `status` message and as the *AC-Target* sensor in Home Assistant.
+
+- The delta only applies in *Heat* and *Cool* modes, not in *Auto*, *Dry* or *Fan*.
+- Changing mode keeps the target the same, so the set point sent moves by the difference in delta.
+- The set point sent is kept within `tmin` to `tmax`; the target range on the web page and in Home Assistant is widened by the deltas (Home Assistant picks up a changed range when the config is next sent, e.g. on reconnect).
+- It does not apply while Faikout auto (or remote `control`) is setting the set point, as that already works from the measured temperature.
+
 ### Special settings
 
 Some more advances settings which you are unlikely to need to ever change.
@@ -147,7 +156,7 @@ The controls are things you can change. These can be sent in a JSON payload in a
 |---------|-------|
 |`power`|Boolean, if aircon powered on|
 |`mode`|One of `H` (Heat), `C` (Cool), `A` (Auto), `D` (Dry), `F` (Fan)|
-|`temp`|Temperature, in Celcius|
+|`temp`|Target temperature, in Celcius - the set point sent to the aircon is this less `heatdelta`/`cooldelta`, reported as `actarget` in status|
 |`fan`|One of `A` (Auto), `Q` (Night) and `1` to `5` for manual fan levels|
 |`swingh`|Boolean - horizontal louvre swing|
 |`swingv`|Boolean - vertical louvre swing|

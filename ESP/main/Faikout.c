@@ -61,6 +61,7 @@ static const char TAG[] = "Faikout";
 #define	daikin_set_t(name,value)	daikin_set_temp(#name,&daikin.name,CONTROL_##name,value)
 
 const char *daikin_set_enum (const char *name, uint8_t * ptr, uint64_t flag, char *value, const char *values);
+const char *daikin_set_target (float value, uint8_t mode);
 
 typedef struct s21poll_s
 {
@@ -526,6 +527,45 @@ compstats_json (jo_t j)
    jo_close (j);
 }
 
+// Heating/cooling delta (heat.delta/cool.delta)
+// daikin.temp is always the setpoint the A/C has (or is sent). Users (web, HA, MQTT, legacy API) see and set
+// the room temperature they want, which is the setpoint plus the delta for the mode. Not used while Faikout
+// auto (or remote control) is setting the A/C setpoint itself.
+static float
+temp_delta (uint8_t mode)
+{                               // How much the room ends up above the A/C setpoint in this mode
+   if (daikin.control)
+      return 0;
+   if (mode == FAIKIN_MODE_HEAT)
+      return (float) heatdelta / heatdelta_scale;
+   if (mode == FAIKIN_MODE_COOL)
+      return (float) cooldelta / cooldelta_scale;
+   return 0;
+}
+
+static float
+temp_target (void)
+{                               // Target temp as the user sees it
+   return daikin.temp + temp_delta (daikin.mode);
+}
+
+static void
+temp_target_range (int *min, int *max)
+{                               // Range of target temps for web/HA, t.min/t.max moved by the deltas
+   float lo = 0,
+      hi = 0;
+   float d[2] = { (float) heatdelta / heatdelta_scale, (float) cooldelta / cooldelta_scale };
+   for (int n = 0; n < 2; n++)
+   {
+      if (d[n] < lo)
+         lo = d[n];
+      if (d[n] > hi)
+         hi = d[n];
+   }
+   *min = (int) floorf (tmin + lo);
+   *max = (int) ceilf (tmax + hi);
+}
+
 const char *
 daikin_set_value (const char *name, uint8_t *ptr, uint64_t flag, uint8_t value)
 {                               // Setting a value (uint8_t)
@@ -533,6 +573,9 @@ daikin_set_value (const char *name, uint8_t *ptr, uint64_t flag, uint8_t value)
       return NULL;              // No change
    if (b.startup && !(daikin.status_known & flag))
       return "Setting cannot be controlled";
+   if (ptr == &daikin.mode && (daikin.status_known & CONTROL_temp) && !isnan (daikin.temp)
+       && temp_delta (*ptr) != temp_delta (value))
+      daikin_set_target (temp_target (), value);        // Keep the target the user sees, so move the A/C setpoint by the change in delta
    if (fanrun && !daikin.fanrun && value == 0 && !strcmp (name, "power")
        && (daikin.mode == FAIKIN_MODE_COOL || daikin.mode == FAIKIN_MODE_DRY
            || (daikin.mode == FAIKIN_MODE_AUTO && !daikin.lastheat)))
@@ -587,18 +630,33 @@ daikin_set_enum (const char *name, uint8_t *ptr, uint64_t flag, char *value, con
 const char *
 daikin_set_temp (const char *name, float *ptr, uint64_t flag, float value)
 {                               // Setting a value (float)
-   if (*ptr == value)
-      return NULL;              // No change
    if (proto_type () == PROTO_TYPE_CN_WIRED)
       value = roundf (value);   // CN_WIRED only does 1C steps
    else if (proto_type () == PROTO_TYPE_S21)
       value = roundf (value * 2.0) / 2.0;       // S21 only does 0.5C steps
+   if (*ptr == value)
+      return NULL;              // No change
    xSemaphoreTake (daikin.mutex, portMAX_DELAY);
    *ptr = value;
    daikin.control_changed |= flag;
    daikin.mode_changed = 1;
    xSemaphoreGive (daikin.mutex);
    return NULL;
+}
+
+const char *
+daikin_set_target (float value, uint8_t mode)
+{                               // Setting target temp as the user sees it, the A/C setpoint is this less the delta for the mode
+   float delta = temp_delta (mode);
+   if (delta)
+   {
+      value -= delta;
+      if (value < tmin)
+         value = tmin;
+      if (value > tmax)
+         value = tmax;
+   }
+   return daikin_set_t (temp, value);
 }
 
 void
@@ -1677,7 +1735,7 @@ daikin_control (jo_t j, uint8_t insecure)
       t = jo_next (j);
       jo_strncpy (j, val, sizeof (val));
 #define	b(name)		if(!strcmp(tag,#name)&&(t==JO_TRUE||t==JO_FALSE))err=daikin_set_v(name,t==JO_TRUE?1:0);
-#define	t(name)		if(!strcmp(tag,#name)&&t==JO_NUMBER)err=daikin_set_t(name,strtof(val,NULL));
+#define	t(name)		if(!strcmp(tag,#name)&&t==JO_NUMBER)err=(CONTROL_##name==CONTROL_temp?daikin_set_target(strtof(val,NULL),daikin.mode):daikin_set_t(name,strtof(val,NULL)));
 #define	i(name)		if(!strcmp(tag,#name)&&t==JO_NUMBER)err=daikin_set_i(name,atoi(val));
 #define	e(name,values)	if(!strcmp(tag,#name)&&t==JO_STRING)err=daikin_set_e(name,val);
       if (!strcmp (tag, "sleep") && sleepmode != REVK_SETTINGS_SLEEPMODE_SWITCH)
@@ -1982,11 +2040,13 @@ daikin_status (void)
    xSemaphoreTake (daikin.mutex, portMAX_DELAY);
    jo_t j = jo_comms_alloc ();
 #define b(name)         if(daikin.status_known&CONTROL_##name)jo_bool(j,#name,daikin.name);
-#define t(name)         if(daikin.status_known&CONTROL_##name){if(isnan(daikin.name)||daikin.name>=100)jo_null(j,#name);else jo_litf(j,#name,"%.1f",daikin.name);}
+#define t(name)         if(daikin.status_known&CONTROL_##name){float v=(CONTROL_##name==CONTROL_temp?temp_target():daikin.name);if(isnan(v)||v>=100)jo_null(j,#name);else jo_litf(j,#name,"%.1f",v);}
 #define i(name)         if(daikin.status_known&CONTROL_##name)jo_int(j,#name,daikin.name);
 #define e(name,values)  if((daikin.status_known&CONTROL_##name)&&daikin.name<sizeof(CONTROL_##name##_VALUES)-1)jo_stringf(j,#name,"%c",CONTROL_##name##_VALUES[daikin.name]);
 #define s(name,len)     if((daikin.status_known&CONTROL_##name)&&*daikin.name)jo_string(j,#name,daikin.name);
 #include "acextras.m"
+   if ((daikin.status_known & CONTROL_temp) && !isnan (daikin.temp) && daikin.temp < 100)
+      jo_litf (j, "actarget", "%.1f", daikin.temp);     // Setpoint sent to the A/C (temp is the target, i.e. this plus heat.delta/cool.delta)
 #ifdef	ELA
    xSemaphoreTake (blemutex, portMAX_DELAY);
    if (ble_sensor_connected ())
@@ -2173,7 +2233,7 @@ web_control (httpd_req_t *req)
       "<div class=tile id=t_hum style=display:none><span>Humidity</span><b id=d_hum></b></div>"   //
       "<div class=tile id=t_demand style=display:none><span>Demand limit</span><b id=d_demand></b></div>"   //
       "</div>"   //
-      "<p class='hint help'>Room temperature is the value Faikout regulates on: an external sensor if one is configured (BLE or MQTT), otherwise the A/C's own room sensor. The action shows what the unit (or Faikout auto) is currently trying to do. Compressor is the inverter frequency, 0 means stopped. Power is the electrical consumption reported by the unit (10&nbsp;W steps, not on all models). Liquid pipe is the refrigerant temperature at the indoor coil: warm when heating, cold when cooling.</p>"   //
+      "<p class='hint help'>Room temperature is the value Faikout regulates on: an external sensor if one is configured (BLE or MQTT), otherwise the A/C's own room sensor. The action shows what the unit (or Faikout auto) is currently trying to do. A/C setpoint is the value actually sent to the unit when it differs from the target: set by Faikout auto, or the target minus the heating/cooling delta from the settings. Compressor is the inverter frequency, 0 means stopped. Power is the electrical consumption reported by the unit (10&nbsp;W steps, not on all models). Liquid pipe is the refrigerant temperature at the indoor coil: warm when heating, cold when cooling.</p>"   //
       "</div>"   //
       "<div class=card id=d_compcard style=display:none>"   //
       "<h2>Compressor</h2>"   //
@@ -2294,9 +2354,16 @@ web_control (httpd_req_t *req)
             "Lower speeds are quieter but move less heat, so the room takes longer to reach the target.");
    if (!nohumidify)
       add (NULL, "Hum", "humidify", "Off", "X", "Low", "L", "Std", "S", "High", "H", "Cont", "C", NULL);
-   addslider (NULL, "Set", "temp", tmin, tmax, get_temp_step ());
+   {
+      int min,
+        max;
+      temp_target_range (&min, &max);
+      addslider (NULL, "Set", "temp", min, max, get_temp_step ());
+   }
    addhelp (NULL,
-            "Set: the target temperature sent to the A/C. When Faikout auto is active (marked ✷) Faikout changes this value itself "
+            "Set: the room temperature you want. If a heating or cooling delta is set (settings), the A/C is sent this target "
+            "minus the delta, shown on the right as A/C, e.g. 20℃ with a heating delta of 3℃ sends 17℃. "
+            "When Faikout auto is active (marked ✷) Faikout changes the A/C setpoint itself "
             "to push the unit into or out of heating/cooling, so adjust the Auto target below instead.");
    // Temperatures are shown in the dashboard above
 #ifdef ELA
@@ -2516,6 +2583,7 @@ web_control (httpd_req_t *req)
                   "s('Tdemand',(o.demand!=undefined?o.demand+'%%':'---'));"     //
                   "n('temp',o.temp);"   //
                   "s('Ttemp',(o.temp?cf(o.temp):'---')+(o.control?'✷':''));"  //
+                  "s('Set',o.actarget!=undefined&&o.actarget!=o.temp?'A/C '+cf(o.actarget):'');"   //
                   "b('autop',o.autop);" //
                   "b('autoe',o.autoe);" //
                   "e('autor',o.autor);" //
@@ -2554,7 +2622,8 @@ web_control (httpd_req_t *req)
       "s('d_band',au?'· Faikout auto ±'+(fh?Math.round(o.autor*18)/10+'℉':o.autor+'℃'):'');"   //
       "var a=o.online===false?'off':(o.power===false?'off':(st.action||'idle'));"   //
       "var p=g('d_action');p.textContent=o.online===false?'Offline':(an[a]||a);p.className='pill a-'+a;"   //
-      "s('d_acset',au&&o.temp&&o.power?'A/C setpoint '+cf(o.temp)+' ✷':'');"   //
+      "var ac=o.actarget!=null?o.actarget:o.temp;"   //
+      "s('d_acset',ac&&(au?o.power:ac!=o.temp)?'A/C setpoint '+cf(ac)+(au?' ✷':''):'');"   //
       "dt('comp',o.comp!=null&&o.comp<999?o.comp+' Hz':null);"   //
       "dt('power',o.consumption!=null?o.consumption+' W':null);"   //
       "dt('fanrpm',o.fanrpm!=null?o.fanrpm+' rpm':null);"   //
@@ -2891,8 +2960,8 @@ web_root (httpd_req_t *req)
    const char *e = daikin_set_e(name, value);  \
    if (e) err = e;                             \
 }
-#define	daikin_set_t_e(err,name,value) {      \
-   const char * e = daikin_set_t(name, value); \
+#define	daikin_set_target_e(err,value) {      \
+   const char * e = daikin_set_target(value, daikin.mode); \
    if (e) err = e;                             \
 }
 
@@ -3203,12 +3272,12 @@ legacy_web_get_control_info (httpd_req_t *req)
    if (daikin.mode <= 7)
       mode = "64370002"[daikin.mode];
    dfr[mode - '0'] = "A34567B"[daikin.fan];
-   dt[mode - '0'] = daikin.temp;
+   dt[mode - '0'] = temp_target ();
    jo_t j = legacy_ok ();
    jo_int (j, "pow", daikin.power);
    jo_stringf (j, "mode", "%c", mode);
    legacy_adv (j);
-   jo_litf (j, "stemp", "%.1f", daikin.temp);
+   jo_litf (j, "stemp", "%.1f", temp_target ());
    jo_int (j, "shum", daikin.hum);
    for (int i = 1; i <= 7; i++)
    {                            // Temp setting in mode
@@ -3223,7 +3292,7 @@ legacy_web_get_control_info (httpd_req_t *req)
    jo_int (j, "dhh", 0);
    if (daikin.mode <= 7)
       jo_stringf (j, "b_mode", "%c", "64370002"[daikin.mode]);
-   jo_litf (j, "b_stemp", "%.1f", daikin.temp);
+   jo_litf (j, "b_stemp", "%.1f", temp_target ());
    jo_int (j, "b_shum", daikin.hum);
    jo_int (j, "alert", 255);
    if (daikin.fan <= 6)
@@ -3284,7 +3353,7 @@ legacy_web_set_control_info (httpd_req_t *req)
       {
          char *v = jo_strdup (j);
          if (v)
-            daikin_set_t_e (err, temp, strtof (v, NULL));
+            daikin_set_target_e (err, strtof (v, NULL));
          free (v);
       }
       if (jo_find (j, "f_rate"))
@@ -3675,8 +3744,11 @@ send_ha_config (void)
       //jo_string (j, "name", hostname);
       //jo_null(j,"name");
       jo_string (j, "~", cmd);
-      jo_int (j, "min_temp", tmin);
-      jo_int (j, "max_temp", tmax);
+      int min,
+        max;
+      temp_target_range (&min, &max);
+      jo_int (j, "min_temp", min);
+      jo_int (j, "max_temp", max);
       jo_string (j, "temp_unit", "C");
       jo_lit (j, "temp_step", ha1c ? "1" : get_temp_step ());
       jo_string (j, "temp_cmd_t", "~/temp");
@@ -3913,9 +3985,9 @@ revk_state_extra (jo_t j)
       jo_bool (j, "online", daikin.online);
    if (daikin.status_known & CONTROL_power)
       jo_bool (j, "power", daikin.power);
-   jo_litf (j, "target", "%.2f", autoe && autor ? (float) autot / autot_scale : daikin.temp);   // Target - either internal or what we are using as reference
+   jo_litf (j, "target", "%.2f", autoe && autor ? (float) autot / autot_scale : temp_target ());        // Target - either internal or what we are using as reference (A/C setpoint plus heat.delta/cool.delta)
    if (daikin.status_known & CONTROL_temp)
-      jo_litf (j, "actarget", "%.2f", daikin.temp);     // The actual target
+      jo_litf (j, "actarget", "%.2f", daikin.temp);     // The actual target sent to the A/C
    if (daikin.status_known & CONTROL_env)
       jo_litf (j, "temp", "%.2f", daikin.env);  // The external temperature
    else if (daikin.status_known & CONTROL_home)
@@ -4087,6 +4159,8 @@ revk_web_extra (httpd_req_t *req, int page)
    if (haenable)
       revk_web_setting (req, "HA Extra switches", "haswitches");
    revk_web_setting (req, "Dark mode LED", "dark");
+   revk_web_setting (req, "Heating delta", "heatdelta");
+   revk_web_setting (req, "Cooling delta", "cooldelta");
    revk_web_setting (req, "Debug", "debug");
    if (!daikin.remote)
       revk_web_setting (req, "Hide Faikout auto mode", "nofaikoutauto");
@@ -4370,8 +4444,8 @@ app_main ()
                      daikin_set_v (mode, map[bletemp->mode]);
                   if (daikin.power != bletemp->power && !(daikin.control_changed & CONTROL_power))
                      daikin_set_v (power, b.faikouton = bletemp->power);
-                  if (!isnan (min) && daikin.temp != (min + max) / 2 && !(daikin.control_changed & CONTROL_temp))
-                     daikin_set_t (temp, (min + max) / 2);
+                  if (!isnan (min) && temp_target () != (min + max) / 2 && !(daikin.control_changed & CONTROL_temp))
+                     daikin_set_target ((min + max) / 2, daikin.mode);
                   if (daikin.remote)
                      daikin.controlvalid = uptime ();
                }
@@ -4386,7 +4460,7 @@ app_main ()
                      daikin_set_v (fan, fan - 1);
                }
                static const uint8_t map[] = { 2, 5, 4, 1, 0, 0, 0, 3 }; // FHCA456D Unspecified,Auto,Fan,Dry,Cool,Heat,Reserved,Faikout
-               bleenv_faikout (hostname, daikin.home, daikin.temp, daikin.temp, daikin.power, daikin.antifreeze | daikin.slave,
+               bleenv_faikout (hostname, daikin.home, temp_target (), temp_target (), daikin.power, daikin.antifreeze | daikin.slave,
                                map[daikin.mode], daikin.fan + 1);
             }
             xSemaphoreGive (blemutex);
@@ -4961,7 +5035,7 @@ app_main ()
             }
             // We were controlling, so set to a non controlling mode, best guess at sane settings for now
             if (!isnan (daikin.mintarget) && !isnan (daikin.maxtarget))
-               daikin_set_t (temp, daikin.heat ? daikin.maxtarget : daikin.mintarget);
+               daikin_set_target (daikin.heat ? daikin.maxtarget : daikin.mintarget, daikin.mode);
             daikin.mintarget = NAN;
             daikin.maxtarget = NAN;
          }

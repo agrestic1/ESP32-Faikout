@@ -81,6 +81,9 @@ u8	cool.back	6		.live	.unit="℃"			// For cooling, pull (increase) target sent 
 s8	heat.over	6		.live	.unit="℃"			// For heating, push (increase) target sent to aircon by this from max to force heating before reaching target
 u8	heat.back	6		.live	.unit="℃"			// For heating, pull (decrease) target sent to aircon by this from min to stop heating after reaching target
 
+s8	heat.delta	0		.live	.decimal=1	.unit="℃"	// Heating: room ends up this much above the aircon setpoint, so the setpoint sent is the target minus this (not in Faikout auto)
+s8	cool.delta	0		.live	.decimal=1	.unit="℃"	// Cooling: room ends up this much above the aircon setpoint (negative if below), so the setpoint sent is the target minus this (not in Faikout auto)
+
 s8	min.outside	-100		.live	.unit="℃"			// Lowest allowed outside temp allowed for operation (if known)
 
 u8	fanrun				.live	.unit="min"			// Auto run fan after cool/dry

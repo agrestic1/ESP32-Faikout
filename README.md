@@ -34,13 +34,13 @@ In addition, for other management systems than HA, the *legacy* Daikin local HTT
 
 ## Further manuals / links
 
-- [Work in progress / release notes](/RevK/ESP32-Faikout/wiki/Work-in-progress)
-- [Wiring](/RevK/ESP32-Faikout/wiki/Wiring)
+- [Work in progress](/RevK/ESP32-Faikout/wiki#work-in-progress)
+- [Wiring](/RevK/ESP32-Faikout/wiki/#Wiring)
 - [Setup](Manuals/Setup.md) Manual
 - [Controls](Manuals/Controls.md) Manual
 - [Advanced](Manuals/Advanced.md) Manual
 - [ESP8266 port](https://github.com/Sonic-Amiga/ESP8266-Faikin) of this code
-- [list of supported air-con](/RevK/ESP32-Faikout/wiki/List-of-confirmed-working-air-con-units) WiKi (please update as needed)
+- [list of supported air-con](/RevK/ESP32-Faikout/wiki/#List-of-confirmed-working-air-con-units) WiKi (please update as needed)
 - [DoC](Manuals/DoC.md) and Vulnerability disclosure policy
 - [S21](Manuals/S21.md) reverse engineered details of `S21` protocol
 

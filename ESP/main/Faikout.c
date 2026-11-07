@@ -102,6 +102,7 @@ struct
    s21poll_t RH;
    s21poll_t RX;
    s21poll_t Ra;
+   s21poll_t Rb;
    s21poll_t Rd;
    s21poll_t Re;
    uint8_t rgfan:1;             // Use RG for fan
@@ -2495,7 +2496,7 @@ legacy_web_get_model_info (httpd_req_t *req)
       s_fdir |= 1;
       en_fdir = 1;
    }
-   if (daikin.satus_known & CONTROL_streamer)
+   if (daikin.status_known & CONTROL_streamer)
       en_spmode |= (1 << 2);
    if (daikin.status_known & CONTROL_econo)
       en_spmode |= (1 << 1);

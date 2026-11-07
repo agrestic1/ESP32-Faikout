@@ -2495,7 +2495,7 @@ legacy_web_get_model_info (httpd_req_t *req)
       s_fdir |= 1;
       en_fdir = 1;
    }
-   if (daikin.status_known & CONTROL_streamer)
+   if (daikin.satus_known & CONTROL_streamer)
       en_spmode |= (1 << 2);
    if (daikin.status_known & CONTROL_econo)
       en_spmode |= (1 << 1);
@@ -3918,6 +3918,9 @@ app_main ()
                   break;
                case 13:
                   poll (R, D,);
+		  break;
+               case 14:
+                  poll (R, b,);
                   // End
                   slowcycle = 0;        // End of extra/debug cycle
                   break;

@@ -34,7 +34,7 @@ In addition, for other management systems than HA, the *legacy* Daikin local HTT
 
 ## Further manuals / links
 
-- [Work in progress](/RevK/ESP32-Faikout/wiki/work-in-progress)
+- [Work in progress](https://codeberg.org/RevK/ESP32-Faikout/wiki/Work-in-progress)
 - [Wiring](/RevK/ESP32-Faikout/wiki/Wiring)
 - [Setup](Manuals/Setup.md) Manual
 - [Controls](Manuals/Controls.md) Manual

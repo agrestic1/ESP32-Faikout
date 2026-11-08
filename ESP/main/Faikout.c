@@ -2865,7 +2865,21 @@ send_ha_config (void)
          jo_string (j, "mdl", daikin.model);
       jo_string (j, "sw", revk_version);
       jo_string (j, "mf", "RevK");
-      if (*hadomain)
+      int ok (const char *h)
+      {                         // Simple sanity check else HA barfs on whole config (I believe all h[-1] are covered)
+         if (!h || !*h || *h == '-' || *h == '.')
+            return 0;
+         while ((*h >= 'A' && *h <= 'Z') || (*h >= 'a' && *h <= 'z') || (*h >= '0' && *h <= '9') || *h == '-' || *h == '.')
+         {
+            if (*h == '.' && (!h[1] || h[1] == '.' || h[-1] == '-' || h[1] == '-'))
+               return 0;
+            h++;
+         }
+         if (*h || h[-1] == '-')
+            return 0;
+         return 1;
+      }
+      if (*hadomain && ok (hostname) && ok (hadomain))
          jo_stringf (j, "cu", "http://%s.%s/", hostname, hadomain);
       else
       {
@@ -3186,8 +3200,8 @@ send_ha_config (void)
    // TODO change above over gradually to new HA library stuff to make way neater
    ha_config_sensor ("ram",.name = "RAM",.field = "mem",.unit = "B",.diag = 1,.fallback = 1,.delete = !haram);
    ha_config_sensor ("spi",.name = "PSRAM",.field = "spi",.unit = "B",.diag = 1,.fallback = 1,.delete = !haram);
-   ha_config_sensor ("uptime",.name = "Uptime",.field = "uptime",.unit = "s",.type = "duration",.stateclass = "measurement",.diag =
-                     1,.fallback = 1,.delete = !hauptime);
+   ha_config_sensor ("uptime",.name = "Uptime",.field = "uptime",.unit = "s",.type = "duration",.stateclass =
+                     "measurement",.diag = 1,.fallback = 1,.delete = !hauptime);
    ha_config_binary ("online",.name = "Online",.field = "online");
    free (cmd);
    free (hastatus);
@@ -3459,17 +3473,12 @@ app_main ()
    } else
       revk_blink (1, 0, b.loopback ? "B" : "G");
    revk_ate_pass ();
-
    revk_blink_do ();            // Show LED ASAP
-
    if (*autotopic)
       revk_mqtt_sub (0, autotopic, autosub, *autopayload ? autopayload : "env");
-
    if (udpdiscovery)
       revk_task ("daikin_discovery", legacy_discovery_task, NULL, 0);
-
    b.dumping = dump;
-
    if (webcontrol || websettings)
    {
       // Web interface
@@ -3547,7 +3556,6 @@ app_main ()
          if (proto_type () == PROTO_TYPE_CN_WIRED)
          {
             uint8_t invert_mask;
-
             if (nocnwired)
                continue;
             // Since CN_WIRED is a passive protocol (receive only, no actual responses),
@@ -3862,7 +3870,6 @@ app_main ()
                }
                if (s21.rgfan)
                   poll (R, G,); // Needed to confirm fan changes.
-
                // The following are polled one per cycle - this is mainly for read only status/meters
                static uint8_t slowcycle = 0;
                if (!slowcycle)
@@ -3919,7 +3926,7 @@ app_main ()
                   break;
                case 13:
                   poll (R, D,);
-		  break;
+                  break;
                case 14:
                   poll (R, b,);
                   // End
@@ -4361,8 +4368,8 @@ app_main ()
                      // Time to increase the fan speed
                      else
                         if (!nofanauto && !daikin.slave
-                            && count_approaching_2_samples * 10 > count_total_2_samples * 9
-                            && step && daikin.fan >= 1 && daikin.fan < autofmax)
+                            && count_approaching_2_samples * 10 > count_total_2_samples * 9 && step && daikin.fan >= 1
+                            && daikin.fan < autofmax)
                      {
                         jo_int (j, "set-fan", daikin.fan + step);
                         daikin_set_v (fan, daikin.fan + step);  // Increase fan

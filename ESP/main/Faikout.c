@@ -1892,10 +1892,6 @@ settings_autob (httpd_req_t *req)
 static esp_err_t
 web_control (httpd_req_t *req)
 {
-#ifdef  CONFIG_REVK_WEB_AUTH
-   if (!web_auth_check (req))
-      return ESP_OK;
-#endif
    web_head (req,
 #ifdef CONFIG_MDNS_MAX_INTERFACES
              *instance ? instance :
@@ -2221,10 +2217,6 @@ web_root (httpd_req_t *req)
 static esp_err_t
 web_status (httpd_req_t *req)
 {                               // Web socket status report
-#ifdef  CONFIG_REVK_WEB_AUTH
-   if (!web_auth_check (req))
-      return ESP_OK;
-#endif
    if (req->method == HTTP_GET)
       return ESP_OK;            // pre handshake
    int fd = httpd_req_to_sockfd (req);
@@ -3463,7 +3455,7 @@ app_main ()
          revk_gpio_set (tx, 1);
       }
    }
-   if (usb_serial_jtag_is_connected ())
+   if (uart_enabled () && usb_serial_jtag_is_connected ())
    {
 #ifdef	CONFIG_REVK_ETHERNET
       if (!b.loopback && !ethpoeload.set)
@@ -4147,7 +4139,7 @@ app_main ()
             daikin.control_changed = 0; // Give up on changes
             daikin.control_count = 0;
          }
-         if (usb_serial_jtag_is_connected ())
+         if (uart_enabled () && usb_serial_jtag_is_connected ())
             revk_blink (18, 2, revk_ate_failed ()? "R" : "G");
          else
             revk_blink (0, 0, b.loopback ? "RGB" : !daikin.online ? "M" : dark ? "" : !daikin.power ? "y" : daikin.mode == 0 ? "O" : daikin.mode == 7 ? "C" : daikin.heat ? "R" : "B"); // FHCA456D

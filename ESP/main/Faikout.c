@@ -42,6 +42,7 @@ static const char TAG[] = "Faikout";
 #define	SWING_HORIZONTAL	"H"
 #define	SWING_BOTH		"H+V"
 #define	SWING_COMFORT		"C"     // Not standard
+#define	SWING_HCOMFORT		"H+C"   // Not standard, horizontal swing plus comfort
 #else
 #define	SWING_OFF		"SWING_OFF"
 #define	SWING_ON		"SWING_ON"
@@ -49,6 +50,7 @@ static const char TAG[] = "Faikout";
 #define	SWING_HORIZONTAL	"SWING_HORIZONTAL"
 #define	SWING_BOTH		"SWING_BOTH"
 #define	SWING_COMFORT		"SWING_COMFORT" // Not standard
+#define	SWING_HCOMFORT		"SWING_HCOMFORT"        // Not standard
 #endif
 
 // Macros for setting values
@@ -1725,10 +1727,15 @@ mqtt_client_callback (int client, const char *prefix, const char *target, const 
       }
       if (!strcmp (suffix, "swing"))
       {
-         if (!strcmp (value, SWING_COMFORT))
+         if (!strcmp (value, SWING_COMFORT) || !strcmp (value, SWING_HCOMFORT))
+         {                      // Comfort is a vertical mode, horizontal swing is independent
             jo_bool (s, "comfort", 1);
-         else
+            if (!noswingh)
+               jo_bool (s, "swingh", !strcmp (value, SWING_HCOMFORT) ? 1 : 0);
+         } else
          {
+            if (!nocomfort && (daikin.status_known & CONTROL_comfort))
+               jo_bool (s, "comfort", 0);
             if (!noswingh)
                jo_bool (s, "swingh", !strcmp (value, SWING_HORIZONTAL) || !strcmp (value, SWING_BOTH)
                         || !strcmp (value, SWING_ON) ? 1 : 0);
@@ -3051,7 +3058,11 @@ send_ha_config (void)
          } else if (daikin.status_known & (CONTROL_swingh | CONTROL_swingv))
             jo_string (j, NULL, SWING_ON);
          if (daikin.status_known & CONTROL_comfort)
+         {
             jo_string (j, NULL, SWING_COMFORT);
+            if (daikin.status_known & CONTROL_swingh)
+               jo_string (j, NULL, SWING_HCOMFORT);
+         }
          jo_close (j);
       }
       if (daikin.status_known & (CONTROL_econo | CONTROL_powerful))
@@ -3296,7 +3307,7 @@ revk_state_extra (jo_t j)
    if (daikin.status_known & CONTROL_led)
       jo_bool (j, "led", daikin.led);
    if (daikin.status_known & (CONTROL_swingh | CONTROL_swingv | CONTROL_comfort))
-      jo_string (j, "swing", daikin.comfort ? SWING_COMFORT :   //
+      jo_string (j, "swing", daikin.comfort ? (daikin.status_known & CONTROL_swingh) && daikin.swingh ? SWING_HCOMFORT : SWING_COMFORT :      //
                  (daikin.status_known & (CONTROL_swingv | CONTROL_swingh)) == (CONTROL_swingv | CONTROL_swingh) && daikin.swingh && daikin.swingv ? SWING_BOTH :        //
                  daikin.swingh ? (daikin.status_known & CONTROL_swingv) ? SWING_HORIZONTAL : SWING_ON : //
                  daikin.swingv ? (daikin.status_known & CONTROL_swingh) ? SWING_VERTICAL : SWING_ON :   //

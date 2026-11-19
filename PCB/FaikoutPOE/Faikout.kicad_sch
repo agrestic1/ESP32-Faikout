@@ -20810,7 +20810,7 @@
 				)
 			)
 		)
-		(property "Value" "20pF"
+		(property "Value" "12pF"
 			(at 104.648 53.34 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -20853,7 +20853,7 @@
 				)
 			)
 		)
-		(property "MPN" "C71879"
+		(property "MPN" ""
 			(at 102.87 57.15 90)
 			(hide yes)
 			(show_name no)
@@ -21147,7 +21147,7 @@
 				)
 			)
 		)
-		(property "Value" "20pF"
+		(property "Value" "12pF"
 			(at 101.092 78.74 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21190,7 +21190,7 @@
 				)
 			)
 		)
-		(property "MPN" "C71879"
+		(property "MPN" ""
 			(at 102.87 74.93 90)
 			(hide yes)
 			(show_name no)

@@ -8036,7 +8036,7 @@
 				)
 			)
 		)
-		(property "Footprint" "RevK:VCUT70N"
+		(property "Footprint" "RevK:VCUT50N"
 			(at 260.35 173.99 0)
 			(hide yes)
 			(show_name no)
@@ -8352,7 +8352,7 @@
 				)
 			)
 		)
-		(property "Value" "70x70"
+		(property "Value" "70x50"
 			(at 262.255 173.99 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8362,7 +8362,7 @@
 				)
 			)
 		)
-		(property "Footprint" "RevK:PCB7070"
+		(property "Footprint" "RevK:PCB7050"
 			(at 262.255 168.275 0)
 			(hide yes)
 			(show_name no)
@@ -9476,7 +9476,7 @@
 				)
 			)
 		)
-		(property "Footprint" "RevK:VCUT70N"
+		(property "Footprint" "RevK:VCUT50N"
 			(at 266.7 173.99 0)
 			(hide yes)
 			(show_name no)

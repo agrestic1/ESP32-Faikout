@@ -1,6 +1,6 @@
 // Generated case design for FaikoutETH/Faikout.kicad_pcb
 // By https://codeberg.org/RevK/PCBCase
-// Generated 2026-10-20 12:38:04
+// Generated 2026-11-19 10:20:05
 // title:	Faikout
 // company:	Adrian Kennard, Andrews & Arnold Ltd
 //
@@ -35,7 +35,7 @@ function pcbwidth()=35.000000;
 pcblength=36.000000;
 function pcblength()=36.000000;
 originx=139.500000;
-originy=65.000000;
+originy=75.000000;
 
 module outline(h=pcbthickness,r=0){linear_extrude(height=h)offset(r=r)polygon(points=[[-17.500000,17.000000],[-17.500000,-17.000000],[-17.423880,-17.382684],[-17.207107,-17.707107],[-16.882684,-17.923880],[-16.500000,-18.000000],[16.500000,-18.000000],[16.882684,-17.923880],[17.207107,-17.707107],[17.423880,-17.382684],[17.500000,-17.000000],[17.500000,-13.025000],[7.500000,-12.975000],[7.500000,-3.000000],[17.500000,-3.000000],[17.500000,13.000000],[12.500000,18.000000],[-16.500000,18.000000],[-16.882684,17.923880],[-17.207107,17.707107],[-17.423880,17.382684]],paths=[[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]]);}
 
@@ -328,7 +328,7 @@ translate([3.037500,13.100000,1.600000])m16(part,hole,block,punch,casetop); // C
 module L1(){translate([1.800000,8.800000,1.600000])rotate([0,0,90.000000])children();}
 module part_L1(part=true,hole=false,block=false,punch=false)
 {
-translate([1.800000,8.800000,1.600000])rotate([0,0,90.000000])m17(part,hole,block,punch,casetop); // L1
+translate([1.800000,8.800000,1.600000])rotate([0,0,90.000000])rotate([0.000000,0.000000,-90.000000])m17(part,hole,block,punch,casetop); // RevK:L_6x6 L6x6x2.8 (back)
 };
 // Parts to go on PCB (top)
 module parts_top(part=false,hole=false,block=false,punch=false){
@@ -696,7 +696,7 @@ if(part)
 }
 
 module m17(part=false,hole=false,block=false,punch=false,height)
-{ // L1
+{ // RevK:L_6x6 L6x6x2.8
 // 6x6x2.8 Inductor
 if(part)
 {
@@ -708,7 +708,7 @@ if(part)
 module bottom_text(offset=0)
 {
 minkowski(){translate([0.00,-2.50,-casebottom-offset-1])rotate(0.00)scale([-1,1])linear_extrude(1)text("shop.revk.uk",size=3.00,halign="center",valign="center",font="OCRB");cylinder(d1=0.38,d2=0,h=0.38,$fn=6);}
-minkowski(){translate([0.00,2.50,-casebottom-offset-1])rotate(0.00)scale([-1,1])linear_extrude(1)text("2026-10-20",size=3.00,halign="center",valign="center",font="OCRB");cylinder(d1=0.38,d2=0,h=0.38,$fn=6);}
+minkowski(){translate([0.00,2.50,-casebottom-offset-1])rotate(0.00)scale([-1,1])linear_extrude(1)text("2026-11-19",size=3.00,halign="center",valign="center",font="OCRB");cylinder(d1=0.38,d2=0,h=0.38,$fn=6);}
 }
 
 module top_text(offset=0)
